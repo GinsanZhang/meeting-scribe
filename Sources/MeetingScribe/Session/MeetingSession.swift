@@ -18,8 +18,8 @@ final class MeetingSession: ObservableObject {
     private let cloudEngine = SiliconFlowTranscriptionEngine()
     private var engineKind: TranscriptionEngineKind = .online
     private let diarizer = SpeakerKitDiarizer()
-    private var micChunker = AudioChunker()
-    private var systemChunker = AudioChunker()
+    private var micSegmenter = VadSegmenter()
+    private var systemSegmenter = VadSegmenter()
     private var runTask: Task<Void, Never>?
     private var lastEmittedEnd: TimeInterval = 0
 
@@ -36,14 +36,10 @@ final class MeetingSession: ObservableObject {
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
         ) ?? .online
-        // The cloud engine transcribes each window independently, so
-        // no overlap — otherwise the overlapped second would be
-        // transcribed (and shown) twice. The local engine resets its
-        // recognizer per window, so it keeps the 1 s overlap to cover
-        // window boundaries.
-        let overlap = engineKind == .online ? 0 : 1
-        micChunker = AudioChunker(overlapSeconds: overlap)
-        systemChunker = AudioChunker(overlapSeconds: overlap)
+        // Fresh VAD segmenters per recording: the VAD's segment start
+        // times are absolute since its creation.
+        micSegmenter = VadSegmenter()
+        systemSegmenter = VadSegmenter()
         isRecording = true
         runTask = Task { await runLoop() }
     }
@@ -90,6 +86,11 @@ final class MeetingSession: ObservableObject {
             let transcriber: any TranscriptionEngine =
                 engineKind == .online ? cloudEngine : localEngine
             try await transcriber.prepare()
+            // VAD cutting is shared by both engines; the ~2 MB model
+            // downloads itself on first use.
+            status = "正在准备语音检测…"
+            try await micSegmenter.prepare()
+            try await systemSegmenter.prepare()
             if mode == .inPerson {
                 try await diarizer.prepare()
             }
@@ -99,16 +100,16 @@ final class MeetingSession: ObservableObject {
                 + " · \(engineLabel)"
             for await chunk in stream {
                 let windows = chunk.source == .microphone
-                    ? micChunker.append(chunk.samples, source: .microphone)
-                    : systemChunker.append(chunk.samples, source: .system)
+                    ? micSegmenter.append(chunk.samples, source: .microphone)
+                    : systemSegmenter.append(chunk.samples, source: .system)
                 for window in windows {
                     await process(window, transcriber: transcriber)
                 }
             }
             // Stream ended (stop called): transcribe the tails.
             status = "正在收尾…"
-            if let tail = micChunker.flush(source: .microphone) { await process(tail, transcriber: transcriber) }
-            if let tail = systemChunker.flush(source: .system) { await process(tail, transcriber: transcriber) }
+            for tail in micSegmenter.flush(source: .microphone) { await process(tail, transcriber: transcriber) }
+            for tail in systemSegmenter.flush(source: .system) { await process(tail, transcriber: transcriber) }
             status = "已停止，共 \(segments.count) 段"
         } catch {
             status = "出错：\(error.localizedDescription)"
@@ -119,9 +120,9 @@ final class MeetingSession: ObservableObject {
     private func process(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
         do {
             let recognized = try await transcriber.transcribe(samples: window.samples)
-            // In-person mode: diarize the same chunk, then align speakers
-            // onto the transcript by time overlap. Skip diarization when
-            // the window produced no real speech.
+            // In-person mode: diarize the same utterance, then align
+            // speakers onto the transcript by time overlap. Skip
+            // diarization when the utterance produced no real speech.
             var diarized: [DiarizedSegment] = []
             if mode == .inPerson, !recognized.isEmpty {
                 let expected = UserDefaults.standard.integer(forKey: SettingsKey.expectedSpeakers)
@@ -133,7 +134,7 @@ final class MeetingSession: ObservableObject {
                     // Speech was transcribed but diarization found no
                     // speaker — log it so a silent diarization failure
                     // doesn't look like "no speakers in the meeting".
-                    print("[MeetingScribe] diarization returned no segments for a \(window.samples.count / 16_000)s window")
+                    print("[MeetingScribe] diarization returned no segments for a \(window.samples.count / 16_000)s utterance")
                 }
                 // Diarized times are relative to the chunk, but the
                 // transcript probe below uses absolute times. Without

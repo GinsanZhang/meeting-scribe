@@ -14,11 +14,36 @@ enum SherpaModelManager {
 
     static let requiredFiles = ["encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt"]
 
-    static var modelDirectory: URL {
+    static var sherpaDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MeetingScribe", isDirectory: true)
             .appendingPathComponent("sherpa-onnx", isDirectory: true)
-            .appendingPathComponent("streaming-paraformer-bilingual-zh-en", isDirectory: true)
+    }
+
+    static var modelDirectory: URL {
+        sherpaDirectory.appendingPathComponent("streaming-paraformer-bilingual-zh-en", isDirectory: true)
+    }
+
+    /// Silero VAD model (~2 MB), downloaded on first use. It fronts
+    /// both transcription engines, so it is not part of the 226 MB
+    /// Paraformer download in Settings.
+    static let vadDownloadURL = URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!
+
+    static var vadModelPath: String { sherpaDirectory.appendingPathComponent("silero_vad.onnx").path }
+
+    static var isVadDownloaded: Bool {
+        FileManager.default.fileExists(atPath: vadModelPath)
+    }
+
+    static func downloadVad() async throws {
+        let (tempURL, _) = try await URLSession.shared.download(from: vadDownloadURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try FileManager.default.createDirectory(at: sherpaDirectory, withIntermediateDirectories: true)
+        let dest = URL(fileURLWithPath: vadModelPath)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            try FileManager.default.removeItem(at: dest)
+        }
+        try FileManager.default.moveItem(at: tempURL, to: dest)
     }
 
     static var isDownloaded: Bool {

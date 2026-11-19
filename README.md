@@ -52,7 +52,7 @@ System audio ────┘
 v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 
 - **Capture**: mic via AVAudioEngine, system audio via ScreenCaptureKit (audio-only stream), both converted to 16 kHz mono
-- **Transcription**: two engines — online Qwen3-ASR-1.7B via SiliconFlow (default; 6 s chunks uploaded per request, a few seconds of lag) and local sherpa-onnx + Paraformer-large (on-device, fully offline, ~226 MB model downloaded once from Settings) on 6 s windows with 1 s overlap. Silent windows and sound-only hallucinations are dropped automatically.
+- **Transcription**: two engines — online Qwen3-ASR-1.7B via SiliconFlow (default; one request per utterance, a few seconds of lag) and local sherpa-onnx + Paraformer-large (on-device, fully offline, ~226 MB model downloaded once from Settings). Both are fed by Silero VAD utterance segmentation (~2 MB model, auto-downloaded on first use): each segment is one natural sentence instead of a fixed 6 s window. Silent windows and sound-only hallucinations are dropped automatically.
 - **Diarization**: SpeakerKit (Pyannote backend) on the same chunks for in-person meetings, aligned onto the transcript by time overlap; online meetings use the mic-vs-system channel split
 - **Summary**: local Ollama, or OpenRouter / SiliconFlow via OpenAI-compatible chat completions; keys in the Keychain
 - **UI**: SwiftUI — record/stop, live transcript with speaker chips, summary pane, settings (provider, models, keys, expected speaker count)
@@ -69,7 +69,7 @@ v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 open Package.swift   # in Xcode 16+, macOS 14+
 ```
 
-Select the MeetingScribe scheme and run. First run downloads the SpeakerKit models from Hugging Face; the offline transcription model (~226 MB) is downloaded once from Settings → 转录 → 本地识别. First run will also prompt for microphone and screen recording permission.
+Select the MeetingScribe scheme and run. First run downloads the SpeakerKit models from Hugging Face; the offline transcription model (~226 MB) is downloaded once from Settings → 转录 → 本地识别, and the Silero VAD model (~2 MB) downloads itself on first recording. First run will also prompt for microphone and screen recording permission.
 
 > Note: the scaffold was written on a Linux machine with no Xcode; it has since been built in Xcode on the MacBook Pro. The sherpa-onnx (2.0.1) and SpeakerKit call sites were verified against upstream source — if the build complains, paste the errors back and they will be fixed.
 
