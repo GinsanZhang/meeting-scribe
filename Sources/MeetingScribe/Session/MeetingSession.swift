@@ -19,7 +19,8 @@ final class MeetingSession: ObservableObject {
     @Published var mode: MeetingMode = .online
 
     private let capture = AudioCaptureEngine()
-    private let localEngine = SherpaOnnxTranscriptionEngine()
+    private let localMicEngine = SherpaOnnxTranscriptionEngine()
+    private let localSystemEngine = SherpaOnnxTranscriptionEngine()
     private let cloudEngine = SiliconFlowTranscriptionEngine()
     private var engineKind: TranscriptionEngineKind = .online
     private let diarizer = SpeakerKitDiarizer()
@@ -83,6 +84,17 @@ final class MeetingSession: ObservableObject {
         }
     }
 
+    /// One streaming recognizer per audio channel. A single sherpa
+    /// recognizer is one audio stream: feeding mic + system audio
+    /// into the same instance mixes the two speakers into one
+    /// hypothesis, and a finishUtterance on one channel resets away
+    /// the other channel's in-progress audio. The cloud engine is
+    /// stateless per request, so it stays shared.
+    private func transcriber(for source: AudioSource) -> any TranscriptionEngine {
+        if engineKind == .online { return cloudEngine }
+        return source == .microphone ? localMicEngine : localSystemEngine
+    }
+
     // MARK: - Pipeline
 
     private func runLoop() async {
@@ -90,9 +102,15 @@ final class MeetingSession: ObservableObject {
             status = engineKind == .online
                 ? "正在连接在线识别…"
                 : "正在加载离线模型…（首次使用需在设置 → 转录 → 本地识别里下载）"
-            let transcriber: any TranscriptionEngine =
-                engineKind == .online ? cloudEngine : localEngine
-            try await transcriber.prepare()
+            if engineKind == .online {
+                try await cloudEngine.prepare()
+            } else {
+                // Two recognizers load the model twice; on the 24 GB
+                // MacBook Pro this is acceptable, and it is the only
+                // way to keep the two channels separate.
+                try await localMicEngine.prepare()
+                try await localSystemEngine.prepare()
+            }
             // VAD cutting is shared by both engines; the ~2 MB model
             // downloads itself on first use.
             status = "正在准备语音检测…"
@@ -109,6 +127,9 @@ final class MeetingSession: ObservableObject {
                 // Live partial subtitles (local engine only — the cloud
                 // engine returns nil here and finalizes per utterance).
                 // A failed append must not kill the session.
+                // Per-channel engine: mic and system audio must never
+                // share one streaming recognizer.
+                let transcriber = transcriber(for: chunk.source)
                 if let partial = try? await transcriber.appendAudio(chunk.samples) {
                     if chunk.source == .microphone {
                         if partial != liveMicPartial { liveMicPartial = partial }
@@ -120,13 +141,13 @@ final class MeetingSession: ObservableObject {
                     ? micSegmenter.append(chunk.samples, source: .microphone)
                     : systemSegmenter.append(chunk.samples, source: .system)
                 for window in windows {
-                    await finalize(window, transcriber: transcriber)
+                    await finalize(window)
                 }
             }
             // Stream ended (stop called): transcribe the tails.
             status = "正在收尾…"
-            for tail in micSegmenter.flush(source: .microphone) { await finalize(tail, transcriber: transcriber) }
-            for tail in systemSegmenter.flush(source: .system) { await finalize(tail, transcriber: transcriber) }
+            for tail in micSegmenter.flush(source: .microphone) { await finalize(tail) }
+            for tail in systemSegmenter.flush(source: .system) { await finalize(tail) }
             liveMicPartial = ""
             liveSystemPartial = ""
             status = "已停止，共 \(segments.count) 段"
@@ -139,7 +160,8 @@ final class MeetingSession: ObservableObject {
     /// Finalize one VAD utterance: get its text from the engine, diarize
     /// it (in-person mode), and append it as a segment. A single
     /// utterance failing must not kill the session.
-    private func finalize(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
+    private func finalize(_ window: AudioWindow) async {
+        let transcriber = transcriber(for: window.source)
         do {
             guard let text = try await transcriber.finishUtterance(samples: window.samples),
                   !text.isEmpty
