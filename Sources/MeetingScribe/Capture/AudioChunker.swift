@@ -13,10 +13,16 @@ struct AudioWindow: Sendable {
 /// independently. Owned by MeetingSession (MainActor), so no locking needed.
 struct AudioChunker {
     static let sampleRate = 16_000
-    /// 6 s window, 1 s overlap: enough context for Whisper, small enough
-    /// for near-real-time display.
-    private let windowSamples = 6 * sampleRate
-    private let hopSamples = 5 * sampleRate
+    /// 6 s window. Overlap defaults to 1 s (helps Whisper at window
+    /// boundaries); the cloud engine uses 0 s so no speech is
+    /// transcribed twice.
+    private let windowSamples: Int
+    private let hopSamples: Int
+
+    init(windowSeconds: Int = 6, overlapSeconds: Int = 1) {
+        self.windowSamples = windowSeconds * Self.sampleRate
+        self.hopSamples = (windowSeconds - overlapSeconds) * Self.sampleRate
+    }
 
     private var buffer: [Float] = []
     private var consumedSamples = 0

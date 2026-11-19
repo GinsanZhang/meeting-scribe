@@ -15,7 +15,9 @@ final class MeetingSession: ObservableObject {
     @Published var mode: MeetingMode = .online
 
     private let capture = AudioCaptureEngine()
-    private let transcriber = WhisperKitEngine()
+    private let whisperEngine = WhisperKitEngine()
+    private let cloudEngine = SiliconFlowTranscriptionEngine()
+    private var engineKind: TranscriptionEngineKind = .online
     private let diarizer = SpeakerKitDiarizer()
     private var micChunker = AudioChunker()
     private var systemChunker = AudioChunker()
@@ -32,8 +34,15 @@ final class MeetingSession: ObservableObject {
         segments = []
         summary = ""
         lastEmittedEnd = 0
-        micChunker = AudioChunker()
-        systemChunker = AudioChunker()
+        engineKind = TranscriptionEngineKind(
+            rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
+        ) ?? .online
+        // The cloud engine transcribes each window independently, so
+        // no overlap — otherwise the overlapped second would be
+        // transcribed (and shown) twice.
+        let overlap = engineKind == .online ? 0 : 1
+        micChunker = AudioChunker(overlapSeconds: overlap)
+        systemChunker = AudioChunker(overlapSeconds: overlap)
         isRecording = true
         runTask = Task { await runLoop() }
     }
@@ -74,27 +83,33 @@ final class MeetingSession: ObservableObject {
 
     private func runLoop() async {
         do {
-            status = "正在加载模型…（首次运行会下载 Whisper 模型）"
+            status = engineKind == .online
+                ? "正在连接在线识别…"
+                : "正在加载模型…（首次运行会下载 Whisper 模型）"
             let whisperModel = UserDefaults.standard.string(forKey: SettingsKey.whisperModel)
                 ?? "openai_whisper-small"
+            let transcriber: any TranscriptionEngine =
+                engineKind == .online ? cloudEngine : whisperEngine
             try await transcriber.prepare(model: whisperModel)
             if mode == .inPerson {
                 try await diarizer.prepare()
             }
             let stream = try await capture.start(mode: mode)
-            status = mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）"
+            let engineLabel = engineKind == .online ? "在线识别" : "本地识别"
+            status = (mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）")
+                + " · \(engineLabel)"
             for await chunk in stream {
                 let windows = chunk.source == .microphone
                     ? micChunker.append(chunk.samples, source: .microphone)
                     : systemChunker.append(chunk.samples, source: .system)
                 for window in windows {
-                    await process(window)
+                    await process(window, transcriber: transcriber)
                 }
             }
             // Stream ended (stop called): transcribe the tails.
             status = "正在收尾…"
-            if let tail = micChunker.flush(source: .microphone) { await process(tail) }
-            if let tail = systemChunker.flush(source: .system) { await process(tail) }
+            if let tail = micChunker.flush(source: .microphone) { await process(tail, transcriber: transcriber) }
+            if let tail = systemChunker.flush(source: .system) { await process(tail, transcriber: transcriber) }
             status = "已停止，共 \(segments.count) 段"
         } catch {
             status = "出错：\(error.localizedDescription)"
@@ -102,49 +117,47 @@ final class MeetingSession: ObservableObject {
         isRecording = false
     }
 
-    private func process(_ window: AudioWindow) async {
+    private func process(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
         do {
             let languageRaw = UserDefaults.standard.string(forKey: SettingsKey.transcriptionLanguage) ?? "zh"
             let language: String? = languageRaw == "auto" ? nil : languageRaw
-            let results = try await transcriber.transcribe(samples: window.samples, language: language)
+            let recognized = try await transcriber.transcribe(samples: window.samples, language: language)
             // In-person mode: diarize the same chunk, then align speakers
             // onto the transcript by time overlap. Skip diarization when
             // the window produced no real speech.
             var diarized: [DiarizedSegment] = []
-            if mode == .inPerson, results.contains(where: { !$0.segments.isEmpty }) {
+            if mode == .inPerson, !recognized.isEmpty {
                 let expected = UserDefaults.standard.integer(forKey: SettingsKey.expectedSpeakers)
                 diarized = try await diarizer.diarize(
                     samples: window.samples,
                     expectedSpeakers: expected > 0 ? expected : nil
                 )
             }
-            for result in results {
-                for segment in result.segments {
-                    let start = window.startTime + TimeInterval(segment.start)
-                    let end = window.startTime + TimeInterval(segment.end)
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty, end > lastEmittedEnd else { continue }
-                    let speaker: SpeakerLabel
-                    if mode == .inPerson {
-                        let probe = TranscriptSegment(
-                            text: text, start: start, end: end,
-                            speaker: .unknown, source: window.source
-                        )
-                        speaker = DiarizationAligner.label(for: probe, in: diarized)
-                    } else {
-                        // Online: the channel is the label. Mic = you,
-                        // system audio = everyone else.
-                        speaker = window.source == .microphone ? .you : .other
-                    }
-                    segments.append(TranscriptSegment(
-                        text: text,
-                        start: max(start, lastEmittedEnd),
-                        end: end,
-                        speaker: speaker,
-                        source: window.source
-                    ))
-                    lastEmittedEnd = max(lastEmittedEnd, end)
+            for segment in recognized {
+                let start = window.startTime + TimeInterval(segment.start)
+                let end = window.startTime + TimeInterval(segment.end)
+                let text = segment.text
+                guard end > lastEmittedEnd else { continue }
+                let speaker: SpeakerLabel
+                if mode == .inPerson {
+                    let probe = TranscriptSegment(
+                        text: text, start: start, end: end,
+                        speaker: .unknown, source: window.source
+                    )
+                    speaker = DiarizationAligner.label(for: probe, in: diarized)
+                } else {
+                    // Online: the channel is the label. Mic = you,
+                    // system audio = everyone else.
+                    speaker = window.source == .microphone ? .you : .other
                 }
+                segments.append(TranscriptSegment(
+                    text: text,
+                    start: max(start, lastEmittedEnd),
+                    end: end,
+                    speaker: speaker,
+                    source: window.source
+                ))
+                lastEmittedEnd = max(lastEmittedEnd, end)
             }
         } catch {
             // A single window failing must not kill the session.

@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.siliconFlowModel) private var siliconFlowModel = SummaryProvider.siliconFlow.defaultModel
     @AppStorage(SettingsKey.whisperModel) private var whisperModel = "openai_whisper-small"
     @AppStorage(SettingsKey.transcriptionLanguage) private var transcriptionLanguage = "zh"
+    @AppStorage(SettingsKey.transcriptionEngine) private var transcriptionEngineRaw = TranscriptionEngineKind.online.rawValue
     @AppStorage(SettingsKey.expectedSpeakers) private var expectedSpeakers = 0
 
     @State private var openRouterKeyInput = ""
@@ -52,20 +53,37 @@ struct SettingsView: View {
             }
 
             Section("转录") {
-                Picker("识别语言", selection: $transcriptionLanguage) {
-                    Text("中文").tag("zh")
-                    Text("English").tag("en")
-                    Text("自动检测").tag("auto")
+                Picker("识别引擎", selection: $transcriptionEngineRaw) {
+                    ForEach(TranscriptionEngineKind.allCases) { kind in
+                        Text(kind.displayName).tag(kind.rawValue)
+                    }
                 }
-                Picker("Whisper 模型", selection: $whisperModel) {
-                    Text("small（多语言，约 466 MB，默认）").tag("openai_whisper-small")
-                    Text("base（多语言，约 145 MB）").tag("openai_whisper-base")
-                    Text("large-v3-turbo（最准，约 626 MB）").tag("large-v3-v20240930_626MB")
-                    Text("tiny（最快调试用）").tag("openai_whisper-tiny")
+                if transcriptionEngineRaw == TranscriptionEngineKind.online.rawValue {
+                    apiKeyRow(
+                        label: "硅基流动 API Key",
+                        input: $siliconFlowKeyInput,
+                        saved: $siliconFlowKeySaved,
+                        account: SummaryProvider.siliconFlow.rawValue
+                    )
+                    Text("在线识别调用硅基流动的 Qwen3-ASR-1.7B，按音频时长计费；每 6 秒音频发一次请求，有几秒延迟。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("识别语言", selection: $transcriptionLanguage) {
+                        Text("中文").tag("zh")
+                        Text("English").tag("en")
+                        Text("自动检测").tag("auto")
+                    }
+                    Picker("Whisper 模型", selection: $whisperModel) {
+                        Text("small（多语言，约 466 MB，默认）").tag("openai_whisper-small")
+                        Text("base（多语言，约 145 MB）").tag("openai_whisper-base")
+                        Text("large-v3-turbo（最准，约 626 MB）").tag("large-v3-v20240930_626MB")
+                        Text("tiny（最快调试用）").tag("openai_whisper-tiny")
+                    }
+                    Text("首次运行会从 Hugging Face 下载所选模型，之后离线可用。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("首次运行会从 Hugging Face 下载所选模型，之后离线可用。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("线下会议") {
