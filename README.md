@@ -37,7 +37,7 @@ System audio ────┘
 
 - **App**: Swift / SwiftUI, native. No Electron.
 - **Capture**: ScreenCaptureKit for system audio (audio-only stream; still needs Screen Recording permission), AVAudioEngine for mic.
-- **Transcription**: whisper.cpp, streaming mode, Metal acceleration. `base`/`small` models are plenty on Apple Silicon.
+- **Transcription**: two engines — offline sherpa-onnx + Paraformer-large (streaming, int8, ~226 MB) and online Qwen3-ASR-1.7B via SiliconFlow.
 - **Diarization**: chunked first — segment audio, extract speaker embeddings, cluster, align labels to transcript segments by timestamp. Streaming diarization later.
 - **Summaries**: local-first via Ollama; cloud via OpenRouter or SiliconFlow when the user wants a bigger model. API keys live in Keychain / Settings UI only.
 - **Privacy**: audio, transcripts and notes stay on the machine by default. Nothing is uploaded unless the user picks a cloud summarizer.
@@ -52,14 +52,14 @@ System audio ────┘
 v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 
 - **Capture**: mic via AVAudioEngine, system audio via ScreenCaptureKit (audio-only stream), both converted to 16 kHz mono
-- **Transcription**: two engines — online Qwen3-ASR-1.7B via SiliconFlow (default; 6 s chunks uploaded per request, a few seconds of lag) and local WhisperKit (on-device Whisper, Core ML) on 6 s windows with 1 s overlap. Language defaults to Chinese (English / auto-detect in Settings); silent windows and sound-only hallucinations are dropped automatically.
+- **Transcription**: two engines — online Qwen3-ASR-1.7B via SiliconFlow (default; 6 s chunks uploaded per request, a few seconds of lag) and local sherpa-onnx + Paraformer-large (on-device, fully offline, ~226 MB model downloaded once from Settings) on 6 s windows with 1 s overlap. Silent windows and sound-only hallucinations are dropped automatically.
 - **Diarization**: SpeakerKit (Pyannote backend) on the same chunks for in-person meetings, aligned onto the transcript by time overlap; online meetings use the mic-vs-system channel split
 - **Summary**: local Ollama, or OpenRouter / SiliconFlow via OpenAI-compatible chat completions; keys in the Keychain
 - **UI**: SwiftUI — record/stop, live transcript with speaker chips, summary pane, settings (provider, models, keys, expected speaker count)
 
 ### Decisions (2026-11-19)
 
-- **Machine**: MacBook Pro M5 Pro, 24 GB — Whisper default is `small` (multilingual), `large-v3-turbo` available in Settings; local Ollama default is Qwen2.5-7B, which fits comfortably in 24 GB unified memory.
+- **Machine**: MacBook Pro M5 Pro, 24 GB — local Paraformer-large int8 (~226 MB) runs on CPU; local Ollama default is Qwen2.5-7B, which fits comfortably in 24 GB unified memory.
 - **Meeting apps**: 企业微信 + 腾讯会议 — capture is via ScreenCaptureKit system audio + mic, which works with any app. The Accessibility trick of reading speaker names from the meeting UI (Yogurt's approach) is only verified for Zoom/Teams/Meet, so it is **not** used here; speaker separation comes from the channel split (online) and SpeakerKit diarization (in-person).
 - **Language**: Chinese — all models are multilingual (never `.en` variants); summarization defaults to Qwen models.
 
@@ -69,9 +69,9 @@ v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 open Package.swift   # in Xcode 16+, macOS 14+
 ```
 
-Select the MeetingScribe scheme and run. First run downloads the Whisper model (~145 MB for base) and the SpeakerKit models from Hugging Face, then works offline. First run will also prompt for microphone and screen recording permission.
+Select the MeetingScribe scheme and run. First run downloads the SpeakerKit models from Hugging Face; the offline transcription model (~226 MB) is downloaded once from Settings → 转录 → 本地识别. First run will also prompt for microphone and screen recording permission.
 
-> Note: this scaffold was written on a Linux machine with no Xcode, so it has **not been compiled yet**. The WhisperKit/SpeakerKit call sites were verified against the Argmax source (argmax-oss-swift 1.0.0), but the first Xcode build is the real check — expect a few API nits, most likely in `Capture/AudioCapture.swift` (CMSampleBuffer conversion) and the `WhisperKit(WhisperKitConfig(...))` initializer. Paste the build errors back and they will be fixed.
+> Note: the scaffold was written on a Linux machine with no Xcode; it has since been built in Xcode on the MacBook Pro. The sherpa-onnx (2.0.1) and SpeakerKit call sites were verified against upstream source — if the build complains, paste the errors back and they will be fixed.
 
 ## License
 

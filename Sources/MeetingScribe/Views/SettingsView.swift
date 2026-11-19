@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Summarizer provider, Whisper model, API keys (Keychain).
+/// Summarizer provider, transcription engine, API keys (Keychain).
 /// Keys are never shown back and never leave the Keychain.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -8,8 +8,6 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.ollamaModel) private var ollamaModel = SummaryProvider.ollama.defaultModel
     @AppStorage(SettingsKey.openRouterModel) private var openRouterModel = SummaryProvider.openRouter.defaultModel
     @AppStorage(SettingsKey.siliconFlowModel) private var siliconFlowModel = SummaryProvider.siliconFlow.defaultModel
-    @AppStorage(SettingsKey.whisperModel) private var whisperModel = "openai_whisper-small"
-    @AppStorage(SettingsKey.transcriptionLanguage) private var transcriptionLanguage = "zh"
     @AppStorage(SettingsKey.transcriptionEngine) private var transcriptionEngineRaw = TranscriptionEngineKind.online.rawValue
     @AppStorage(SettingsKey.expectedSpeakers) private var expectedSpeakers = 0
 
@@ -18,6 +16,8 @@ struct SettingsView: View {
     @State private var openRouterKeySaved = false
     @State private var siliconFlowKeySaved = false
     @State private var notice = ""
+    @State private var downloadProgress: Double?
+    @State private var modelDownloaded = SherpaModelManager.isDownloaded
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,20 +69,48 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Picker("识别语言", selection: $transcriptionLanguage) {
-                        Text("中文").tag("zh")
-                        Text("English").tag("en")
-                        Text("自动检测").tag("auto")
+                    // 本地识别：sherpa-onnx + Paraformer-large（中英双语），
+                    // 完全离线。模型不在仓库里，首次使用需下载。
+                    if modelDownloaded {
+                        Text("离线模型已下载（Paraformer-large，中英双语，约 226 MB），可离线识别。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("本地识别使用 Paraformer-large（中英双语），完全离线；首次使用需下载约 226 MB 模型。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let downloadProgress {
+                            ProgressView(value: downloadProgress)
+                            Text("正在下载离线模型… \(Int(downloadProgress * 100))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("下载离线模型") {
+                                downloadProgress = 0
+                                notice = ""
+                                Task {
+                                    do {
+                                        try await SherpaModelManager.download { progress in
+                                            Task { @MainActor in
+                                                downloadProgress = progress
+                                            }
+                                        }
+                                        await MainActor.run {
+                                            downloadProgress = nil
+                                            modelDownloaded = true
+                                            notice = "离线模型已下载完成，可切换到本地识别"
+                                        }
+                                    } catch {
+                                        await MainActor.run {
+                                            downloadProgress = nil
+                                            notice = "下载失败：\(error.localizedDescription)"
+                                        }
+                                    }
+                                }
+                            }
+                            .disabled(downloadProgress != nil)
+                        }
                     }
-                    Picker("Whisper 模型", selection: $whisperModel) {
-                        Text("small（多语言，约 466 MB，默认）").tag("openai_whisper-small")
-                        Text("base（多语言，约 145 MB）").tag("openai_whisper-base")
-                        Text("large-v3-turbo（最准，约 626 MB）").tag("large-v3-v20240930_626MB")
-                        Text("tiny（最快调试用）").tag("openai_whisper-tiny")
-                    }
-                    Text("首次运行会从 Hugging Face 下载所选模型，之后离线可用。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -116,6 +144,7 @@ struct SettingsView: View {
         .onAppear {
             openRouterKeySaved = KeychainStore.read(account: SummaryProvider.openRouter.rawValue) != nil
             siliconFlowKeySaved = KeychainStore.read(account: SummaryProvider.siliconFlow.rawValue) != nil
+            modelDownloaded = SherpaModelManager.isDownloaded
         }
     }
 

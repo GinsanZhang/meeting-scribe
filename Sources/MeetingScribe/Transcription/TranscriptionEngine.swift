@@ -1,9 +1,9 @@
 import Foundation
-import WhisperKit
 
 enum TranscriptionError: Error, LocalizedError {
     case notPrepared
     case missingAPIKey
+    case missingLocalModel
     case requestFailed(String)
     case badResponse
 
@@ -11,6 +11,7 @@ enum TranscriptionError: Error, LocalizedError {
         switch self {
         case .notPrepared: return "转录引擎尚未加载"
         case .missingAPIKey: return "未设置硅基流动 API Key，请在设置 → 转录 → 在线识别里保存"
+        case .missingLocalModel: return "未下载离线模型，请在设置 → 转录 → 本地识别里下载"
         case .requestFailed(let detail): return "在线识别请求失败：\(detail)"
         case .badResponse: return "在线识别返回了无法识别的结果"
         }
@@ -26,58 +27,12 @@ struct RecognizedSegment: Sendable {
 }
 
 protocol TranscriptionEngine: Actor {
-    /// `model` is the WhisperKit model id, e.g. "openai_whisper-small".
-    /// Takes effect on first call; later calls with a different model
-    /// reload the pipeline. Cloud engines ignore it.
-    func prepare(model: String) async throws
-    /// Transcribe 16 kHz mono samples. `language` is a Whisper language
-    /// code ("zh", "en", …); `nil` lets the engine detect the language.
-    /// Returned segments are already cleaned: silent windows and
-    /// hallucinated sound annotations are dropped, raw special tokens
-    /// are stripped from the text.
-    func transcribe(samples: [Float], language: String?) async throws -> [RecognizedSegment]
-}
-
-/// On-device Whisper via WhisperKit (Core ML on the Neural Engine).
-/// Default model is the multilingual small (~466 MB); switch to
-/// "large-v3-v20240930_626MB" in Settings for maximum accuracy,
-/// "openai_whisper-tiny" for the fastest debug loop.
-/// Note: always use a multilingual model, never a `.en` variant —
-/// meetings are in Chinese.
-actor WhisperKitEngine: TranscriptionEngine {
-    private var pipe: WhisperKit?
-    private var loadedModel: String?
-
-    func prepare(model: String) async throws {
-        if pipe != nil, loadedModel == model { return }
-        let config = WhisperKitConfig(model: model, verbose: false, prewarm: true, load: true)
-        pipe = try await WhisperKit(config)
-        loadedModel = model
-    }
-
-    func transcribe(samples: [Float], language: String?) async throws -> [RecognizedSegment] {
-        guard let pipe else { throw TranscriptionError.notPrepared }
-        // WhisperKit's defaults decode to English and keep raw special
-        // tokens in segment.text — both produce garbage for Chinese
-        // meetings, so set them explicitly. `detectLanguage` only takes
-        // effect when no language is given (auto-detect mode).
-        let options = DecodingOptions(
-            language: language,
-            detectLanguage: language == nil,
-            skipSpecialTokens: true,
-            suppressBlank: true,
-            noSpeechThreshold: 0.6
-        )
-        let results = try await pipe.transcribe(audioArray: samples, decodeOptions: options)
-        return results.flatMap { result in
-            result.segments.compactMap { segment -> RecognizedSegment? in
-                guard segment.noSpeechProb <= 0.6,
-                      let text = TranscriptSanitizer.clean(segment.text)
-                else { return nil }
-                return RecognizedSegment(text: text, start: segment.start, end: segment.end)
-            }
-        }
-    }
+    /// Load the engine (model files, API key check, …).
+    func prepare() async throws
+    /// Transcribe 16 kHz mono samples. Returned segments are already
+    /// cleaned: silent windows and hallucinated sound annotations are
+    /// dropped, raw special tokens are stripped from the text.
+    func transcribe(samples: [Float]) async throws -> [RecognizedSegment]
 }
 
 /// Online transcription via SiliconFlow's Qwen3-ASR-1.7B
@@ -90,18 +45,18 @@ actor SiliconFlowTranscriptionEngine: TranscriptionEngine {
     static let modelID = "Qwen/Qwen3-ASR-1.7B"
     static let endpoint = URL(string: "https://api.siliconflow.cn/v1/audio/transcriptions")!
 
-    func prepare(model: String) async throws {
+    func prepare() async throws {
         guard KeychainStore.read(account: SummaryProvider.siliconFlow.rawValue) != nil else {
             throw TranscriptionError.missingAPIKey
         }
     }
 
-    func transcribe(samples: [Float], language: String?) async throws -> [RecognizedSegment] {
+    func transcribe(samples: [Float]) async throws -> [RecognizedSegment] {
         guard let apiKey = KeychainStore.read(account: SummaryProvider.siliconFlow.rawValue),
               !apiKey.isEmpty
         else { throw TranscriptionError.missingAPIKey }
         // Qwen3-ASR detects the language itself and the endpoint takes
-        // no language parameter, so `language` is intentionally unused.
+        // no language parameter.
         let wav = WavEncoder.encode(samples: samples, sampleRate: 16_000)
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
@@ -169,7 +124,7 @@ enum WavEncoder {
     }
 }
 
-/// Cleans one Whisper segment's text. Returns nil when the segment
+/// Cleans one recognized segment's text. Returns nil when the segment
 /// carries no real speech and should be dropped.
 enum TranscriptSanitizer {
     /// Matches a raw Whisper special token such as

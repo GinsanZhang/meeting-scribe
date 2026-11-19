@@ -1,5 +1,4 @@
 import Foundation
-import WhisperKit
 
 /// Owns the recording pipeline: capture -> chunk -> transcribe -> diarize
 /// -> labeled transcript. Runs on the main actor; the heavy inference runs
@@ -15,7 +14,7 @@ final class MeetingSession: ObservableObject {
     @Published var mode: MeetingMode = .online
 
     private let capture = AudioCaptureEngine()
-    private let whisperEngine = WhisperKitEngine()
+    private let localEngine = SherpaOnnxTranscriptionEngine()
     private let cloudEngine = SiliconFlowTranscriptionEngine()
     private var engineKind: TranscriptionEngineKind = .online
     private let diarizer = SpeakerKitDiarizer()
@@ -39,7 +38,9 @@ final class MeetingSession: ObservableObject {
         ) ?? .online
         // The cloud engine transcribes each window independently, so
         // no overlap — otherwise the overlapped second would be
-        // transcribed (and shown) twice.
+        // transcribed (and shown) twice. The local engine resets its
+        // recognizer per window, so it keeps the 1 s overlap to cover
+        // window boundaries.
         let overlap = engineKind == .online ? 0 : 1
         micChunker = AudioChunker(overlapSeconds: overlap)
         systemChunker = AudioChunker(overlapSeconds: overlap)
@@ -85,12 +86,10 @@ final class MeetingSession: ObservableObject {
         do {
             status = engineKind == .online
                 ? "正在连接在线识别…"
-                : "正在加载模型…（首次运行会下载 Whisper 模型）"
-            let whisperModel = UserDefaults.standard.string(forKey: SettingsKey.whisperModel)
-                ?? "openai_whisper-small"
+                : "正在加载离线模型…（首次使用需在设置 → 转录 → 本地识别里下载）"
             let transcriber: any TranscriptionEngine =
-                engineKind == .online ? cloudEngine : whisperEngine
-            try await transcriber.prepare(model: whisperModel)
+                engineKind == .online ? cloudEngine : localEngine
+            try await transcriber.prepare()
             if mode == .inPerson {
                 try await diarizer.prepare()
             }
@@ -119,9 +118,7 @@ final class MeetingSession: ObservableObject {
 
     private func process(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
         do {
-            let languageRaw = UserDefaults.standard.string(forKey: SettingsKey.transcriptionLanguage) ?? "zh"
-            let language: String? = languageRaw == "auto" ? nil : languageRaw
-            let recognized = try await transcriber.transcribe(samples: window.samples, language: language)
+            let recognized = try await transcriber.transcribe(samples: window.samples)
             // In-person mode: diarize the same chunk, then align speakers
             // onto the transcript by time overlap. Skip diarization when
             // the window produced no real speech.

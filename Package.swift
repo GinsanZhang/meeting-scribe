@@ -9,17 +9,20 @@ let package = Package(
     ],
     dependencies: [
         // Argmax Open-Source SDK (v1.0.0, 2026-05):
-        // WhisperKit = on-device Whisper STT (Core ML, Neural Engine),
         // SpeakerKit = on-device speaker diarization (Pyannote backend).
         // The old github.com/argmaxinc/WhisperKit URL redirects here.
-        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.0.0")
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.0.0"),
+        // sherpa-onnx (2.0.1): on-device streaming ASR (Paraformer).
+        // SPM product "sherpa-onnx", Swift module SherpaOnnx, backed by
+        // a prebuilt macOS XCFramework + onnxruntime.
+        .package(url: "https://github.com/k2-fsa/sherpa-onnx", from: "2.0.1")
     ],
     targets: [
         .executableTarget(
             name: "MeetingScribe",
             dependencies: [
-                .product(name: "WhisperKit", package: "argmax-oss-swift"),
-                .product(name: "SpeakerKit", package: "argmax-oss-swift")
+                .product(name: "SpeakerKit", package: "argmax-oss-swift"),
+                .product(name: "sherpa-onnx", package: "sherpa-onnx")
             ]
         )
     ]

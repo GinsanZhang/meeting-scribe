@@ -1,6 +1,5 @@
 import Foundation
 import SpeakerKit
-import WhisperKit
 
 /// One diarized stretch of speech. Times are seconds relative to the
 /// audio chunk that was diarized.

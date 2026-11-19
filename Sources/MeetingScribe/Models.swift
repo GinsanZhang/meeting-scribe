@@ -46,8 +46,9 @@ struct TranscriptSegment: Identifiable, Sendable {
     let source: AudioSource
 }
 
-/// Which transcription engine to use. Local = on-device WhisperKit;
-/// online = Qwen3-ASR-1.7B via the SiliconFlow API.
+/// Which transcription engine to use. Local = on-device sherpa-onnx +
+/// Paraformer-large (offline); online = Qwen3-ASR-1.7B via the
+/// SiliconFlow API.
 enum TranscriptionEngineKind: String, CaseIterable, Identifiable {
     case online
     case local
@@ -57,7 +58,7 @@ enum TranscriptionEngineKind: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .online: return "在线 · Qwen3-ASR（硅基流动）"
-        case .local: return "本地 · Whisper（设备端）"
+        case .local: return "本地 · Paraformer（设备端）"
         }
     }
 }
@@ -104,8 +105,6 @@ enum SettingsKey {
     static let ollamaModel = "ollamaModel"
     static let openRouterModel = "openRouterModel"
     static let siliconFlowModel = "siliconFlowModel"
-    static let whisperModel = "whisperModel"
-    static let transcriptionLanguage = "transcriptionLanguage"
     static let transcriptionEngine = "transcriptionEngine"
     static let expectedSpeakers = "expectedSpeakers"
     static let meetingMode = "meetingMode"
