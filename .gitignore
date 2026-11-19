@@ -1,0 +1,39 @@
+# Xcode / Swift
+.DS_Store
+build/
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.xcscheme
+!default.xcscheme
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+Packages/
+Package.resolved
+
+# Models & local data (downloaded at runtime, never committed)
+*.bin
+*.gguf
+Models/
+Recordings/
+
+# Secrets
+*.env
+Secrets.plist
