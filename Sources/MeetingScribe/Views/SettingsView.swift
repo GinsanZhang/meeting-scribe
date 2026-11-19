@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.openRouterModel) private var openRouterModel = SummaryProvider.openRouter.defaultModel
     @AppStorage(SettingsKey.siliconFlowModel) private var siliconFlowModel = SummaryProvider.siliconFlow.defaultModel
     @AppStorage(SettingsKey.whisperModel) private var whisperModel = "openai_whisper-small"
+    @AppStorage(SettingsKey.transcriptionLanguage) private var transcriptionLanguage = "zh"
     @AppStorage(SettingsKey.expectedSpeakers) private var expectedSpeakers = 0
 
     @State private var openRouterKeyInput = ""
@@ -51,6 +52,11 @@ struct SettingsView: View {
             }
 
             Section("转录") {
+                Picker("识别语言", selection: $transcriptionLanguage) {
+                    Text("中文").tag("zh")
+                    Text("English").tag("en")
+                    Text("自动检测").tag("auto")
+                }
                 Picker("Whisper 模型", selection: $whisperModel) {
                     Text("small（多语言，约 466 MB，默认）").tag("openai_whisper-small")
                     Text("base（多语言，约 145 MB）").tag("openai_whisper-base")

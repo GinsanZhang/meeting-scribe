@@ -104,11 +104,14 @@ final class MeetingSession: ObservableObject {
 
     private func process(_ window: AudioWindow) async {
         do {
-            let results = try await transcriber.transcribe(samples: window.samples)
+            let languageRaw = UserDefaults.standard.string(forKey: SettingsKey.transcriptionLanguage) ?? "zh"
+            let language: String? = languageRaw == "auto" ? nil : languageRaw
+            let results = try await transcriber.transcribe(samples: window.samples, language: language)
             // In-person mode: diarize the same chunk, then align speakers
-            // onto the transcript by time overlap.
+            // onto the transcript by time overlap. Skip diarization when
+            // the window produced no real speech.
             var diarized: [DiarizedSegment] = []
-            if mode == .inPerson {
+            if mode == .inPerson, results.contains(where: { !$0.segments.isEmpty }) {
                 let expected = UserDefaults.standard.integer(forKey: SettingsKey.expectedSpeakers)
                 diarized = try await diarizer.diarize(
                     samples: window.samples,

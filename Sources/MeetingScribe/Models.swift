@@ -89,6 +89,7 @@ enum SettingsKey {
     static let openRouterModel = "openRouterModel"
     static let siliconFlowModel = "siliconFlowModel"
     static let whisperModel = "whisperModel"
+    static let transcriptionLanguage = "transcriptionLanguage"
     static let expectedSpeakers = "expectedSpeakers"
     static let meetingMode = "meetingMode"
 }

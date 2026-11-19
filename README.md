@@ -52,7 +52,7 @@ System audio ────┘
 v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 
 - **Capture**: mic via AVAudioEngine, system audio via ScreenCaptureKit (audio-only stream), both converted to 16 kHz mono
-- **Transcription**: WhisperKit (on-device Whisper, Core ML) on 6 s windows with 1 s overlap
+- **Transcription**: WhisperKit (on-device Whisper, Core ML) on 6 s windows with 1 s overlap. Language defaults to Chinese (English / auto-detect in Settings); silent windows and sound-only hallucinations are dropped automatically.
 - **Diarization**: SpeakerKit (Pyannote backend) on the same chunks for in-person meetings, aligned onto the transcript by time overlap; online meetings use the mic-vs-system channel split
 - **Summary**: local Ollama, or OpenRouter / SiliconFlow via OpenAI-compatible chat completions; keys in the Keychain
 - **UI**: SwiftUI — record/stop, live transcript with speaker chips, summary pane, settings (provider, models, keys, expected speaker count)
