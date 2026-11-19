@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import CoreMedia
 @preconcurrency import ScreenCaptureKit
+import os
 
 /// One chunk of 16 kHz mono audio from a single source.
 struct CapturedAudio: Sendable {
@@ -26,11 +27,10 @@ enum CaptureError: Error, LocalizedError {
 /// (ScreenCaptureKit). Both are converted to 16 kHz mono Float and delivered
 /// on a single AsyncStream. One instance per recording session.
 @MainActor
-final class AudioCaptureEngine: NSObject, @preconcurrency SCStreamDelegate, @preconcurrency SCStreamOutput {
+final class AudioCaptureEngine: NSObject {
     private let engine = AVAudioEngine()
     private var stream: SCStream?
-    private var micConverter: AVAudioConverter?
-    private var systemConverter: AVAudioConverter?
+    private var systemHandler: SystemAudioStreamHandler?
     private let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
     )!
@@ -66,13 +66,13 @@ final class AudioCaptureEngine: NSObject, @preconcurrency SCStreamDelegate, @pre
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
             throw CaptureError.converterUnavailable
         }
-        micConverter = converter
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, let converter = self.micConverter,
-                  let samples = AudioSampleConverter.resampleTo16kMono(buffer, converter: converter)
-            else { return }
-            continuation.yield(CapturedAudio(samples: samples, source: .microphone))
-        }
+        let streamContinuation = continuation
+        MicrophoneTapInstaller.install(
+            input: input,
+            format: inputFormat,
+            converter: converter,
+            continuation: streamContinuation
+        )
         engine.prepare()
         try engine.start()
     }
@@ -101,13 +101,52 @@ final class AudioCaptureEngine: NSObject, @preconcurrency SCStreamDelegate, @pre
         config.capturesAudio = true
         config.sampleRate = 48_000
         config.channelCount = 2
-        let stream = SCStream(filter: filter, configuration: config, delegate: self)
+        let handler = SystemAudioStreamHandler(
+            continuation: continuation,
+            outputFormat: outputFormat
+        )
+        systemHandler = handler
+        let stream = SCStream(filter: filter, configuration: config, delegate: handler)
         self.stream = stream
         try stream.addStreamOutput(
-            self, type: SCStreamOutputType.audio,
+            handler, type: SCStreamOutputType.audio,
             sampleHandlerQueue: DispatchQueue(label: "meeting-scribe.system-audio")
         )
         try await stream.startCapture()
+    }
+}
+
+private enum MicrophoneTapInstaller {
+    nonisolated static func install(
+        input: AVAudioInputNode,
+        format: AVAudioFormat,
+        converter: AVAudioConverter,
+        continuation: AsyncStream<CapturedAudio>.Continuation
+    ) {
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            guard let samples = AudioSampleConverter.resampleTo16kMono(buffer, converter: converter)
+            else { return }
+            continuation.yield(CapturedAudio(samples: samples, source: .microphone))
+        }
+    }
+}
+
+private final class SystemAudioStreamHandler: NSObject,
+    SCStreamDelegate,
+    SCStreamOutput,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private let continuation: AsyncStream<CapturedAudio>.Continuation
+    private let outputFormat: AVAudioFormat
+    private var converter: AVAudioConverter?
+
+    init(
+        continuation: AsyncStream<CapturedAudio>.Continuation,
+        outputFormat: AVAudioFormat
+    ) {
+        self.continuation = continuation
+        self.outputFormat = outputFormat
     }
 
     func stream(
@@ -117,10 +156,15 @@ final class AudioCaptureEngine: NSObject, @preconcurrency SCStreamDelegate, @pre
     ) {
         guard outputType == .audio else { return }
         guard let pcmBuffer = AudioSampleConverter.pcmBuffer(from: sampleBuffer) else { return }
-        if systemConverter == nil {
-            systemConverter = AVAudioConverter(from: pcmBuffer.format, to: outputFormat)
+
+        lock.lock()
+        if converter == nil {
+            converter = AVAudioConverter(from: pcmBuffer.format, to: outputFormat)
         }
-        guard let converter = systemConverter,
+        let converter = converter
+        lock.unlock()
+
+        guard let converter,
               let samples = AudioSampleConverter.resampleTo16kMono(pcmBuffer, converter: converter)
         else { return }
         continuation.yield(CapturedAudio(samples: samples, source: .system))
@@ -143,13 +187,19 @@ enum AudioSampleConverter {
             return nil
         }
         var error: NSError?
-        var supplied = false
+        let supplied = OSAllocatedUnfairLock(initialState: false)
         converter.convert(to: outBuffer, error: &error) { _, status in
-            if supplied {
+            let shouldSupply = supplied.withLock { alreadySupplied in
+                if alreadySupplied {
+                    return false
+                }
+                alreadySupplied = true
+                return true
+            }
+            if !shouldSupply {
                 status.pointee = .noDataNow
                 return nil
             }
-            supplied = true
             status.pointee = .haveData
             return buffer
         }
