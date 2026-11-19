@@ -195,4 +195,31 @@ actor SherpaOnnxTranscriptionEngine: TranscriptionEngine {
         let duration = Float(samples.count) / 16_000
         return [RecognizedSegment(text: text, start: 0, end: duration)]
     }
+
+    /// Streaming partials: feed audio as it arrives, decode what is
+    /// ready, and return the running hypothesis. The caller shows it
+    /// as a live subtitle; `finishUtterance` turns it into a segment.
+    func appendAudio(_ samples: [Float]) async throws -> String? {
+        guard let recognizer else { throw TranscriptionError.notPrepared }
+        recognizer.acceptWaveform(samples: samples)
+        while recognizer.isReady() {
+            recognizer.decode()
+        }
+        return TranscriptSanitizer.clean(recognizer.getResult().text)
+    }
+
+    func finishUtterance(samples: [Float]) async throws -> String? {
+        guard let recognizer else { throw TranscriptionError.notPrepared }
+        // `samples` is ignored: the utterance audio is already in the
+        // stream (fed via appendAudio), including the trailing silence
+        // the VAD waited for. A short silence pad flushes the last
+        // frames, then the stream resets for the next utterance.
+        recognizer.acceptWaveform(samples: [Float](repeating: 0, count: 3200))
+        while recognizer.isReady() {
+            recognizer.decode()
+        }
+        let text = TranscriptSanitizer.clean(recognizer.getResult().text)
+        recognizer.reset()
+        return text
+    }
 }

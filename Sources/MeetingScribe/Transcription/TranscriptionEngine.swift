@@ -33,6 +33,21 @@ protocol TranscriptionEngine: Actor {
     /// cleaned: silent windows and hallucinated sound annotations are
     /// dropped, raw special tokens are stripped from the text.
     func transcribe(samples: [Float]) async throws -> [RecognizedSegment]
+    /// Feed live audio for real-time partial results. Returns the
+    /// current partial transcript, or nil when there is nothing new to
+    /// show. Default: no live partials.
+    func appendAudio(_ samples: [Float]) async throws -> String?
+    /// Finalize the current utterance and return its text (nil when it
+    /// carries no speech). Default: transcribe the given samples.
+    func finishUtterance(samples: [Float]) async throws -> String?
+}
+
+extension TranscriptionEngine {
+    func appendAudio(_ samples: [Float]) async throws -> String? { nil }
+
+    func finishUtterance(samples: [Float]) async throws -> String? {
+        try await transcribe(samples: samples).first?.text
+    }
 }
 
 /// Online transcription via SiliconFlow's Qwen3-ASR-1.7B

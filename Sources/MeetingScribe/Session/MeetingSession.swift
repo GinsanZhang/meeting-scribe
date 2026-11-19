@@ -10,6 +10,11 @@ final class MeetingSession: ObservableObject {
     @Published private(set) var summary = ""
     @Published private(set) var isSummarizing = false
     @Published private(set) var status = "就绪"
+    /// Live partial subtitles, one per audio channel (online meetings
+    /// have two). The local engine updates them as speech arrives;
+    /// the cloud engine leaves them empty and finalizes per utterance.
+    @Published private(set) var liveMicPartial = ""
+    @Published private(set) var liveSystemPartial = ""
 
     @Published var mode: MeetingMode = .online
 
@@ -32,6 +37,8 @@ final class MeetingSession: ObservableObject {
         guard !isRecording else { return }
         segments = []
         summary = ""
+        liveMicPartial = ""
+        liveSystemPartial = ""
         lastEmittedEnd = 0
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
@@ -99,17 +106,29 @@ final class MeetingSession: ObservableObject {
             status = (mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）")
                 + " · \(engineLabel)"
             for await chunk in stream {
+                // Live partial subtitles (local engine only — the cloud
+                // engine returns nil here and finalizes per utterance).
+                // A failed append must not kill the session.
+                if let partial = try? await transcriber.appendAudio(chunk.samples) {
+                    if chunk.source == .microphone {
+                        if partial != liveMicPartial { liveMicPartial = partial }
+                    } else if partial != liveSystemPartial {
+                        liveSystemPartial = partial
+                    }
+                }
                 let windows = chunk.source == .microphone
                     ? micSegmenter.append(chunk.samples, source: .microphone)
                     : systemSegmenter.append(chunk.samples, source: .system)
                 for window in windows {
-                    await process(window, transcriber: transcriber)
+                    await finalize(window, transcriber: transcriber)
                 }
             }
             // Stream ended (stop called): transcribe the tails.
             status = "正在收尾…"
-            for tail in micSegmenter.flush(source: .microphone) { await process(tail, transcriber: transcriber) }
-            for tail in systemSegmenter.flush(source: .system) { await process(tail, transcriber: transcriber) }
+            for tail in micSegmenter.flush(source: .microphone) { await finalize(tail, transcriber: transcriber) }
+            for tail in systemSegmenter.flush(source: .system) { await finalize(tail, transcriber: transcriber) }
+            liveMicPartial = ""
+            liveSystemPartial = ""
             status = "已停止，共 \(segments.count) 段"
         } catch {
             status = "出错：\(error.localizedDescription)"
@@ -117,14 +136,21 @@ final class MeetingSession: ObservableObject {
         isRecording = false
     }
 
-    private func process(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
+    /// Finalize one VAD utterance: get its text from the engine, diarize
+    /// it (in-person mode), and append it as a segment. A single
+    /// utterance failing must not kill the session.
+    private func finalize(_ window: AudioWindow, transcriber: any TranscriptionEngine) async {
         do {
-            let recognized = try await transcriber.transcribe(samples: window.samples)
+            guard let text = try await transcriber.finishUtterance(samples: window.samples),
+                  !text.isEmpty
+            else {
+                clearLivePartial(for: window.source)
+                return
+            }
             // In-person mode: diarize the same utterance, then align
-            // speakers onto the transcript by time overlap. Skip
-            // diarization when the utterance produced no real speech.
+            // speakers onto the transcript by time overlap.
             var diarized: [DiarizedSegment] = []
-            if mode == .inPerson, !recognized.isEmpty {
+            if mode == .inPerson {
                 let expected = UserDefaults.standard.integer(forKey: SettingsKey.expectedSpeakers)
                 diarized = try await diarizer.diarize(
                     samples: window.samples,
@@ -149,35 +175,45 @@ final class MeetingSession: ObservableObject {
                     )
                 }
             }
-            for segment in recognized {
-                let start = window.startTime + TimeInterval(segment.start)
-                let end = window.startTime + TimeInterval(segment.end)
-                let text = segment.text
-                guard end > lastEmittedEnd else { continue }
-                let speaker: SpeakerLabel
-                if mode == .inPerson {
-                    let probe = TranscriptSegment(
-                        text: text, start: start, end: end,
-                        speaker: .unknown, source: window.source
-                    )
-                    speaker = DiarizationAligner.label(for: probe, in: diarized)
-                } else {
-                    // Online: the channel is the label. Mic = you,
-                    // system audio = everyone else.
-                    speaker = window.source == .microphone ? .you : .other
-                }
-                segments.append(TranscriptSegment(
-                    text: text,
-                    start: max(start, lastEmittedEnd),
-                    end: end,
-                    speaker: speaker,
-                    source: window.source
-                ))
-                lastEmittedEnd = max(lastEmittedEnd, end)
+            let start = window.startTime
+            let end = window.startTime + TimeInterval(window.samples.count) / 16_000
+            guard end > lastEmittedEnd else {
+                clearLivePartial(for: window.source)
+                return
             }
+            let speaker: SpeakerLabel
+            if mode == .inPerson {
+                let probe = TranscriptSegment(
+                    text: text, start: start, end: end,
+                    speaker: .unknown, source: window.source
+                )
+                speaker = DiarizationAligner.label(for: probe, in: diarized)
+            } else {
+                // Online: the channel is the label. Mic = you,
+                // system audio = everyone else.
+                speaker = window.source == .microphone ? .you : .other
+            }
+            segments.append(TranscriptSegment(
+                text: text,
+                start: max(start, lastEmittedEnd),
+                end: end,
+                speaker: speaker,
+                source: window.source
+            ))
+            lastEmittedEnd = max(lastEmittedEnd, end)
+            clearLivePartial(for: window.source)
         } catch {
-            // A single window failing must not kill the session.
-            print("[MeetingScribe] window failed: \(error)")
+            // A single utterance failing must not kill the session.
+            print("[MeetingScribe] utterance failed: \(error)")
+            clearLivePartial(for: window.source)
+        }
+    }
+
+    private func clearLivePartial(for source: AudioSource) {
+        if source == .microphone {
+            liveMicPartial = ""
+        } else {
+            liveSystemPartial = ""
         }
     }
 }

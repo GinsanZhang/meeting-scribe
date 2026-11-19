@@ -57,7 +57,7 @@ struct ContentView: View {
 
     private var transcriptList: some View {
         Group {
-            if session.segments.isEmpty {
+            if session.segments.isEmpty && session.liveMicPartial.isEmpty && session.liveSystemPartial.isEmpty {
                 ContentUnavailableView(
                     "还没有转录内容",
                     systemImage: "waveform",
@@ -65,31 +65,80 @@ struct ContentView: View {
                 )
             } else {
                 ScrollViewReader { proxy in
-                    List(session.segments) { segment in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(formatTime(segment.start))
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 40, alignment: .leading)
-                            Text(segment.speaker.displayName)
-                                .font(.caption.bold())
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(speakerColor(segment.speaker).opacity(0.15))
-                                .foregroundStyle(speakerColor(segment.speaker))
-                                .clipShape(.capsule)
-                            Text(segment.text)
+                    List {
+                        ForEach(session.segments) { segment in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(formatTime(segment.start))
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 40, alignment: .leading)
+                                Text(segment.speaker.displayName)
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(speakerColor(segment.speaker).opacity(0.15))
+                                    .foregroundStyle(speakerColor(segment.speaker))
+                                    .clipShape(.capsule)
+                                Text(segment.text)
+                            }
+                            .id(segment.id)
                         }
-                        .id(segment.id)
+                        // Live partial subtitles (local engine only):
+                        // the running hypothesis for the utterance still
+                        // being spoken, greyed-out until it is finalized
+                        // into a segment above.
+                        if !session.liveMicPartial.isEmpty {
+                            livePartialRow(
+                                text: session.liveMicPartial,
+                                speaker: session.mode == .inPerson ? .unknown : .you,
+                                id: "live-partial-mic"
+                            )
+                        }
+                        if !session.liveSystemPartial.isEmpty {
+                            livePartialRow(
+                                text: session.liveSystemPartial,
+                                speaker: .other,
+                                id: "live-partial-system"
+                            )
+                        }
                     }
                     .onChange(of: session.segments.count) { _, _ in
                         if let last = session.segments.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
+                    .onChange(of: session.liveMicPartial) { _, _ in
+                        if !session.liveMicPartial.isEmpty {
+                            proxy.scrollTo("live-partial-mic", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: session.liveSystemPartial) { _, _ in
+                        if !session.liveSystemPartial.isEmpty {
+                            proxy.scrollTo("live-partial-system", anchor: .bottom)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private func livePartialRow(text: String, speaker: SpeakerLabel, id: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("实时")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .leading)
+            Text(speaker.displayName)
+                .font(.caption.bold())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(speakerColor(speaker).opacity(0.15))
+                .foregroundStyle(speakerColor(speaker))
+                .clipShape(.capsule)
+            Text(text)
+                .foregroundStyle(.secondary)
+        }
+        .id(id)
     }
 
     private var summarySection: some View {
