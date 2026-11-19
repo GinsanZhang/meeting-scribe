@@ -132,6 +132,24 @@ final class MeetingSession: ObservableObject {
                     samples: window.samples,
                     expectedSpeakers: expected > 0 ? expected : nil
                 )
+                if diarized.isEmpty {
+                    // Speech was transcribed but diarization found no
+                    // speaker — log it so a silent diarization failure
+                    // doesn't look like "no speakers in the meeting".
+                    print("[MeetingScribe] diarization returned no segments for a \(window.samples.count / 16_000)s window")
+                }
+                // Diarized times are relative to the chunk, but the
+                // transcript probe below uses absolute times. Without
+                // this shift, only the first window (startTime == 0)
+                // could ever match — every later window fell back to
+                // `.unknown`.
+                diarized = diarized.map { segment in
+                    DiarizedSegment(
+                        speakerId: segment.speakerId,
+                        start: segment.start + window.startTime,
+                        end: segment.end + window.startTime
+                    )
+                }
             }
             for segment in recognized {
                 let start = window.startTime + TimeInterval(segment.start)
