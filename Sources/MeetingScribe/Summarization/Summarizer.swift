@@ -105,7 +105,7 @@ private struct ChatCompletionsResponse: Decodable {
 
 // MARK: - Local Ollama
 
-/// Local model via Ollama (`ollama serve` + `ollama pull qwen2.5:3b`).
+/// Local model via Ollama (`ollama serve` + `ollama pull qwen2.5:7b`).
 /// Nothing leaves the machine.
 struct OllamaSummarizer: Summarizer {
     let model: String

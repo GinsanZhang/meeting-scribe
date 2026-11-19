@@ -23,8 +23,9 @@ Mic ─────────────┐
                  ├─► Capture (ScreenCaptureKit / AVAudioEngine)
 System audio ────┘
                         │
-                        ├─► Streaming ASR: whisper.cpp (Metal, on-device)
-                        │   5s sliding window + VAD, live transcript
+                        ├─► Streaming ASR: Paraformer (offline) or
+                        │   Qwen3-ASR via SiliconFlow (online);
+                        │   VAD-cut utterances, live transcript
                         │
                         ├─► Diarization: speaker embeddings + clustering
                         │   on audio segments, aligned to transcript
