@@ -14,6 +14,7 @@ struct AudioWindow: Sendable {
 /// emitted window is one natural sentence instead of a fixed 6 s block.
 /// One instance per audio source (mic / system). Owned by
 /// MeetingSession (MainActor), so no locking needed.
+@MainActor
 final class VadSegmenter {
     private var vad: SherpaOnnxVoiceActivityDetectorWrapper?
 

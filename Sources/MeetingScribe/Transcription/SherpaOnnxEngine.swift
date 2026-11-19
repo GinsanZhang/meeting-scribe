@@ -70,7 +70,7 @@ enum SherpaModelManager {
     /// `onProgress` reports 0...1 during the download; it is called from
     /// a background URLSession queue, so the caller must hop to the main
     /// actor before touching UI state.
-    static func download(onProgress: @escaping (Double) -> Void) async throws {
+    static func download(onProgress: @escaping @Sendable (Double) -> Void) async throws {
         let delegate = DownloadDelegate(onProgress: onProgress)
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
@@ -101,11 +101,11 @@ enum SherpaModelManager {
     /// finished file back through a continuation. Resumes at most once:
     /// both didFinishDownloadingTo and didCompleteWithError fire.
     private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-        let onProgress: (Double) -> Void
+        let onProgress: @Sendable (Double) -> Void
         var continuation: CheckedContinuation<URL, Error>?
         private var resumed = false
 
-        init(onProgress: @escaping (Double) -> Void) {
+        init(onProgress: @escaping @Sendable (Double) -> Void) {
             self.onProgress = onProgress
         }
 
