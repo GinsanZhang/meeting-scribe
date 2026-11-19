@@ -3,6 +3,7 @@ import SwiftUI
 /// Summarizer provider, Whisper model, API keys (Keychain).
 /// Keys are never shown back and never leave the Keychain.
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @AppStorage(SettingsKey.summaryProvider) private var providerRaw = SummaryProvider.ollama.rawValue
     @AppStorage(SettingsKey.ollamaModel) private var ollamaModel = SummaryProvider.ollama.defaultModel
     @AppStorage(SettingsKey.openRouterModel) private var openRouterModel = SummaryProvider.openRouter.defaultModel
@@ -17,6 +18,7 @@ struct SettingsView: View {
     @State private var notice = ""
 
     var body: some View {
+        VStack(spacing: 0) {
         Form {
             Section("总结服务") {
                 Picker("服务商", selection: $providerRaw) {
@@ -26,7 +28,7 @@ struct SettingsView: View {
                 }
                 if providerRaw == SummaryProvider.ollama.rawValue {
                     TextField("Ollama 模型", text: $ollamaModel)
-                    Text("需要本机运行 ollama serve，例如：ollama pull qwen2.5:3b")
+                    Text("需要本机运行 ollama serve，例如：ollama pull qwen2.5:7b")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if providerRaw == SummaryProvider.openRouter.rawValue {
@@ -75,9 +77,18 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
         }
-        .formStyle(.grouped)
-        .frame(width: 480, height: 420)
+        .frame(width: 480, height: 460)
         .onAppear {
             openRouterKeySaved = KeychainStore.read(account: SummaryProvider.openRouter.rawValue) != nil
             siliconFlowKeySaved = KeychainStore.read(account: SummaryProvider.siliconFlow.rawValue) != nil
