@@ -14,10 +14,10 @@ struct MiniView: View {
     @EnvironmentObject var session: MeetingSession
     @Environment(\.dismiss) private var dismiss
 
-    @State private var isPressing = false
     @State private var holdProgress = 0.0
-    @State private var holdFired = false
-    @State private var holdTask: Task<Void, Never>?
+    /// Set when a long-press stops the recording, so the Button action
+    /// that fires on release doesn't immediately start a new one.
+    @State private var suppressTap = false
 
     var body: some View {
         VStack(spacing: 8) {
@@ -76,58 +76,64 @@ struct MiniView: View {
                 color: session.isRecording && !session.isPaused ? .cyan : .gray,
                 diameter: 148
             )
-            Circle()
-                .fill(.ultraThinMaterial)
-                .frame(width: 64, height: 64)
-                .overlay(
+            // A plain Button for the tap (start / pause / resume) plus
+            // a built-in long-press for stop. The old hand-rolled
+            // DragGesture state machine could get stuck: a press whose
+            // release never arrived (e.g. the window's drag-to-move
+            // stealing the gesture) left the button dead. The Button's
+            // click gesture has no such state to get stuck in.
+            Button(action: micTap) {
+                ZStack {
                     Circle()
-                        .strokeBorder(
-                            session.isRecording ? Color.red : Color.primary.opacity(0.2),
-                            lineWidth: 2
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 64, height: 64)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(
+                                    session.isRecording ? Color.red : Color.primary.opacity(0.2),
+                                    lineWidth: 2
+                                )
                         )
-                )
-            Image(systemName: session.isRecording && session.isPaused ? "play.fill" : "mic.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(session.isRecording ? .red : .primary)
+                    Image(systemName: session.isRecording && session.isPaused ? "play.fill" : "mic.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(session.isRecording ? .red : .primary)
+                }
+            }
+            .buttonStyle(.plain)
+            .onLongPressGesture(
+                minimumDuration: 0.55,
+                pressing: { pressing in
+                    if pressing {
+                        withAnimation(.linear(duration: 0.55)) { holdProgress = 1 }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) { holdProgress = 0 }
+                    }
+                },
+                perform: {
+                    suppressTap = true
+                    if session.isRecording { session.stop() }
+                }
+            )
             // Long-press progress ring (fills over 0.55 s).
             Circle()
                 .trim(from: 0, to: holdProgress)
                 .stroke(Color.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .frame(width: 72, height: 72)
                 .rotationEffect(.degrees(-90))
+                .allowsHitTesting(false)
         }
         .frame(width: 148, height: 148)
-        .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressing { beginHold() }
-                }
-                .onEnded { _ in endHold() }
-        )
     }
 
-    /// A press starts the 0.55 s long-press timer; holding past it stops
-    /// the recording. Releasing earlier is a tap (start / pause / resume).
-    private func beginHold() {
-        isPressing = true
-        holdFired = false
-        withAnimation(.linear(duration: 0.55)) { holdProgress = 1 }
-        holdTask = Task {
-            try? await Task.sleep(for: .seconds(0.55))
-            guard !Task.isCancelled else { return }
-            holdFired = true
-            withAnimation(.easeOut(duration: 0.2)) { holdProgress = 0 }
-            if session.isRecording { session.stop() }
+    /// Tap: start, pause, or resume. A tap that follows a long-press
+    /// is swallowed: the Button action also fires on release after a
+    /// long-press stop, and without the guard it would immediately
+    /// start a new recording.
+    private func micTap() {
+        if suppressTap {
+            suppressTap = false
+            return
         }
-    }
-
-    private func endHold() {
-        isPressing = false
-        holdTask?.cancel()
-        holdTask = nil
-        withAnimation(.easeOut(duration: 0.2)) { holdProgress = 0 }
-        guard !holdFired else { return }
         if session.isRecording {
             if session.isPaused { session.resume() } else { session.pause() }
         } else {

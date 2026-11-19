@@ -66,12 +66,22 @@ final class AudioCaptureEngine: NSObject {
     }
 
     /// Resumes capture after `pause()`. Failures are logged, not thrown:
-    /// a failed resume just leaves the session paused.
+    /// a failed resume just leaves the session paused. Retries once
+    /// after re-preparing the engine, since a start right after a
+    /// pause can occasionally fail on the first attempt.
     func resume() {
-        do {
-            try engine.start()
-        } catch {
-            print("[MeetingScribe] failed to resume microphone: \(error)")
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                print("[MeetingScribe] failed to resume microphone: \(error)")
+                engine.prepare()
+                do {
+                    try engine.start()
+                } catch {
+                    print("[MeetingScribe] retry to resume microphone failed: \(error)")
+                }
+            }
         }
         if let stream {
             Task { try? await stream.startCapture() }

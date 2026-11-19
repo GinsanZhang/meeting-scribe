@@ -72,11 +72,18 @@ struct ContentView: View {
     }
 
     /// Round transport controls, recorder-style: a red record circle,
-    /// pause/resume, and stop. Cmd+R starts when idle and stops while
-    /// recording (the shortcut lives on whichever button is enabled).
+    /// pause/resume, and stop. The record circle doubles as the resume
+    /// control while paused (it is the obvious "start again" button);
+    /// Cmd+R starts when idle and resumes when paused.
     private var transportControls: some View {
         HStack(spacing: 8) {
-            Button(action: { session.start() }) {
+            Button(action: {
+                if session.isPaused {
+                    session.resume()
+                } else {
+                    session.start()
+                }
+            }) {
                 Circle()
                     .fill(Color.red)
                     .frame(width: 32, height: 32)
@@ -86,10 +93,10 @@ struct ContentView: View {
                     )
             }
             .buttonStyle(.plain)
-            .disabled(session.isRecording)
-            .opacity(session.isRecording ? 0.35 : 1)
+            .disabled(session.isRecording && !session.isPaused)
+            .opacity(session.isRecording && !session.isPaused ? 0.35 : 1)
             .keyboardShortcut("r", modifiers: .command)
-            .help("开始录音")
+            .help(session.isPaused ? "继续录音" : "开始录音")
             Button(action: {
                 if session.isPaused { session.resume() } else { session.pause() }
             }) {
@@ -109,7 +116,6 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(!session.isRecording)
-            .keyboardShortcut("r", modifiers: .command)
             .help("结束录音")
         }
     }
