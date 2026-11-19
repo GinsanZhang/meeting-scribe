@@ -35,16 +35,47 @@ final class AudioCaptureEngine: NSObject {
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
     )!
 
-    private let (audioStream, continuation) = AsyncStream<CapturedAudio>.makeStream()
+    /// One stream per recording: a fresh pair is created on every `start()`.
+    /// (The old single-stream design silently dropped all audio on the second
+    /// recording in the same launch, because `stop()` finishes the stream.)
+    private var audioStream: AsyncStream<CapturedAudio>?
+    private var continuation: AsyncStream<CapturedAudio>.Continuation?
 
     /// Starts capture and returns the stream of audio chunks.
     /// Call `stop()` to end the stream.
     func start(mode: MeetingMode) async throws -> AsyncStream<CapturedAudio> {
-        try startMicrophone()
+        let (stream, continuation) = AsyncStream<CapturedAudio>.makeStream()
+        self.audioStream = stream
+        self.continuation = continuation
+        try startMicrophone(continuation: continuation)
         if mode == .online {
-            try await startSystemAudio()
+            try await startSystemAudio(continuation: continuation)
         }
-        return audioStream
+        return stream
+    }
+
+    /// Suspends both channels without ending the stream, so `resume()` can
+    /// pick the same stream back up. The mic engine is paused (the tap stays
+    /// installed); the ScreenCaptureKit stream is stopped (it can be started
+    /// again on the same SCStream).
+    func pause() {
+        engine.pause()
+        if let stream {
+            Task { try? await stream.stopCapture() }
+        }
+    }
+
+    /// Resumes capture after `pause()`. Failures are logged, not thrown:
+    /// a failed resume just leaves the session paused.
+    func resume() {
+        do {
+            try engine.start()
+        } catch {
+            print("[MeetingScribe] failed to resume microphone: \(error)")
+        }
+        if let stream {
+            Task { try? await stream.startCapture() }
+        }
     }
 
     func stop() {
@@ -54,12 +85,14 @@ final class AudioCaptureEngine: NSObject {
             Task { try? await stream.stopCapture() }
             self.stream = nil
         }
-        continuation.finish()
+        continuation?.finish()
+        continuation = nil
+        audioStream = nil
     }
 
     // MARK: - Microphone
 
-    private func startMicrophone() throws {
+    private func startMicrophone(continuation: AsyncStream<CapturedAudio>.Continuation) throws {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.channelCount > 0 else { throw CaptureError.microphoneUnavailable }
@@ -79,7 +112,7 @@ final class AudioCaptureEngine: NSObject {
 
     // MARK: - System audio (ScreenCaptureKit)
 
-    private func startSystemAudio() async throws {
+    private func startSystemAudio(continuation: AsyncStream<CapturedAudio>.Continuation) async throws {
         let content: SCShareableContent = try await withCheckedThrowingContinuation { continuation in
             SCShareableContent.getExcludingDesktopWindows(
                 false,

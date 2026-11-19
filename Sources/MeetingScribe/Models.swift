@@ -108,4 +108,5 @@ enum SettingsKey {
     static let transcriptionEngine = "transcriptionEngine"
     static let expectedSpeakers = "expectedSpeakers"
     static let meetingMode = "meetingMode"
+    static let appearance = "appearance"
 }

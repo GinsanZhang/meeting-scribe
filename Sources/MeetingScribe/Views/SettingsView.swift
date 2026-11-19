@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.siliconFlowModel) private var siliconFlowModel = SummaryProvider.siliconFlow.defaultModel
     @AppStorage(SettingsKey.transcriptionEngine) private var transcriptionEngineRaw = TranscriptionEngineKind.online.rawValue
     @AppStorage(SettingsKey.expectedSpeakers) private var expectedSpeakers = 0
+    @AppStorage(SettingsKey.appearance) private var appearanceRaw = Appearance.system.rawValue
 
     @State private var openRouterKeyInput = ""
     @State private var siliconFlowKeyInput = ""
@@ -22,6 +23,15 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
         Form {
+            Section("外观") {
+                Picker("主题", selection: $appearanceRaw) {
+                    ForEach(Appearance.allCases) { appearance in
+                        Text(appearance.displayName).tag(appearance.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
             Section("总结服务") {
                 Picker("服务商", selection: $providerRaw) {
                     ForEach(SummaryProvider.allCases) { provider in

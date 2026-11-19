@@ -1,13 +1,24 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var session = MeetingSession()
+    /// Owned by the app and shared with the mini window.
+    @EnvironmentObject var session: MeetingSession
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(SettingsKey.meetingMode) private var modeRaw = MeetingMode.online.rawValue
     @State private var showingSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if session.isRecording {
+                SpectrumStrip(
+                    micBars: session.micSpectrum,
+                    systemBars: session.systemSpectrum,
+                    showSystem: session.mode == .online
+                )
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+            }
             Divider()
             transcriptList
             livePartialFooter
@@ -35,18 +46,10 @@ struct ContentView: View {
             .frame(width: 200)
             .disabled(session.isRecording)
 
-            Button(session.isRecording ? "停止" : "开始录音") {
-                if session.isRecording {
-                    session.stop()
-                } else {
-                    session.start()
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut("r", modifiers: [.command])
+            transportControls
 
-            if let start = session.recordingStartedAt {
-                RecordingClock(start: start)
+            if session.isRecording {
+                RecordingIndicator(elapsed: session.elapsedSeconds, paused: session.isPaused)
             } else {
                 Text(session.status)
                     .foregroundStyle(.secondary)
@@ -54,6 +57,11 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Button { openWindow(id: "mini") } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .help("打开极简窗口")
 
             Button { showingSettings = true } label: {
                 Image(systemName: "gearshape")
@@ -63,13 +71,56 @@ struct ContentView: View {
         .padding()
     }
 
+    /// Round transport controls, recorder-style: a red record circle,
+    /// pause/resume, and stop. Cmd+R starts when idle and stops while
+    /// recording (the shortcut lives on whichever button is enabled).
+    private var transportControls: some View {
+        HStack(spacing: 8) {
+            Button(action: { session.start() }) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.red.opacity(0.35), lineWidth: 3)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(session.isRecording)
+            .opacity(session.isRecording ? 0.35 : 1)
+            .keyboardShortcut("r", modifiers: .command)
+            .help("开始录音")
+            Button(action: {
+                if session.isPaused { session.resume() } else { session.pause() }
+            }) {
+                Image(systemName: session.isPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 13))
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!session.isRecording)
+            .help(session.isPaused ? "继续录音" : "暂停录音")
+            Button(action: { session.stop() }) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 13))
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!session.isRecording)
+            .keyboardShortcut("r", modifiers: .command)
+            .help("结束录音")
+        }
+    }
+
     private var transcriptList: some View {
         Group {
             if session.segments.isEmpty {
                 ContentUnavailableView(
                     "还没有转录内容",
                     systemImage: "waveform",
-                    description: Text(session.isRecording ? "正在聆听…" : "点「开始录音」，转录会实时出现在这里")
+                    description: Text(session.isRecording ? "正在聆听…" : "点左上角的红色录音圆点，转录会实时出现在这里")
                 )
             } else {
                 ScrollViewReader { proxy in
@@ -189,34 +240,34 @@ struct ContentView: View {
     }
 }
 
-/// Recording indicator: pulsing red dot + elapsed time, ticking once
-/// a second via TimelineView. Only exists while actually recording.
-private struct RecordingClock: View {
-    let start: Date
+/// Recording indicator: pulsing red dot + elapsed time (paused time
+/// excluded; the session ticks it once a second). Amber and still
+/// while paused. Only exists while actually recording.
+private struct RecordingIndicator: View {
+    let elapsed: TimeInterval
+    let paused: Bool
 
     @State private var pulse = false
 
     var body: some View {
-        TimelineView(.periodic(from: start, by: 1)) { timeline in
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 8, height: 8)
-                    .scaleEffect(pulse ? 1.3 : 1)
-                    .opacity(pulse ? 0.55 : 1)
-                    .animation(
-                        .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                        value: pulse
-                    )
-                    .onAppear { pulse = true }
-                Text(elapsedText(now: timeline.date))
-                    .font(.callout.monospacedDigit())
+        HStack(spacing: 6) {
+            Circle()
+                .fill(paused ? Color.orange : Color.red)
+                .frame(width: 8, height: 8)
+                .scaleEffect(paused ? 1 : (pulse ? 1.3 : 1))
+                .opacity(paused ? 1 : (pulse ? 0.55 : 1))
+                .animation(
+                    paused ? nil : .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                    value: pulse
+                )
+                .onAppear { pulse = true }
+            Text(formatTime(elapsed))
+                .font(.callout.monospacedDigit())
+            if paused {
+                Text("已暂停")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func elapsedText(now: Date) -> String {
-        let total = max(0, Int(now.timeIntervalSince(start)))
-        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 }

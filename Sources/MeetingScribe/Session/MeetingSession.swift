@@ -10,9 +10,17 @@ final class MeetingSession: ObservableObject {
     @Published private(set) var summary = ""
     @Published private(set) var isSummarizing = false
     @Published private(set) var status = "就绪"
-    /// When the audio stream actually started (nil while preparing or
-    /// stopped). Drives the elapsed-time recording indicator.
-    @Published private(set) var recordingStartedAt: Date?
+    /// True while the user paused the recording. Capture is suspended
+    /// (the stream stays open), so `resume()` picks the same session up.
+    @Published private(set) var isPaused = false
+    /// Elapsed recording time in seconds, excluding paused time. Ticked
+    /// once a second by runLoop; drives the recording clock.
+    @Published private(set) var elapsedSeconds: TimeInterval = 0
+    /// Live spectrum bars (0...1, 28 per channel) for the spectrum
+    /// views. Driven by per-chunk RMS; the bar spread is stylized,
+    /// not an FFT.
+    @Published private(set) var micSpectrum: [CGFloat] = Array(repeating: 0, count: Self.spectrumBarCount)
+    @Published private(set) var systemSpectrum: [CGFloat] = Array(repeating: 0, count: Self.spectrumBarCount)
     /// Live partial subtitles, one per audio channel (online meetings
     /// have two). The local engine updates them as speech arrives;
     /// the cloud engine leaves them empty and finalizes per utterance.
@@ -31,11 +39,19 @@ final class MeetingSession: ObservableObject {
     private var systemSegmenter = VadSegmenter()
     private var runTask: Task<Void, Never>?
     private var lastEmittedEnd: TimeInterval = 0
+    private static let spectrumBarCount = 28
+    private var elapsedTicker: Task<Void, Never>?
+    private var micLevel: CGFloat = 0
+    private var systemLevel: CGFloat = 0
+    private var spectrumPhase = 0.0
 
     var transcriptText: String {
         segments.map { "[\(formatTime($0.start))] \($0.speaker.displayName)：\($0.text)" }
             .joined(separator: "\n")
     }
+
+    /// Short badge for the mini window, e.g. "在线" / "本地".
+    var engineBadge: String { engineKind == .online ? "在线" : "本地" }
 
     func start() {
         guard !isRecording else { return }
@@ -43,7 +59,12 @@ final class MeetingSession: ObservableObject {
         summary = ""
         liveMicPartial = ""
         liveSystemPartial = ""
-        recordingStartedAt = nil
+        isPaused = false
+        elapsedSeconds = 0
+        micSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
+        systemSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
+        micLevel = 0
+        systemLevel = 0
         lastEmittedEnd = 0
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
@@ -60,6 +81,25 @@ final class MeetingSession: ObservableObject {
         // Don't cancel the task: let the loop finish the stream and
         // transcribe the tail, then it clears isRecording itself.
         capture.stop()
+    }
+
+    /// Pauses capture without ending the session: the audio stream stays
+    /// open, the transcript and elapsed time are kept, and `resume()`
+    /// continues the same recording.
+    func pause() {
+        guard isRecording, !isPaused else { return }
+        isPaused = true
+        capture.pause()
+        status = "已暂停"
+    }
+
+    func resume() {
+        guard isRecording, isPaused else { return }
+        capture.resume()
+        isPaused = false
+        let engineLabel = engineKind == .online ? "在线识别" : "本地识别"
+        status = (mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）")
+            + " · \(engineLabel)"
     }
 
     func generateSummary() {
@@ -124,11 +164,20 @@ final class MeetingSession: ObservableObject {
                 try await diarizer.prepare()
             }
             let stream = try await capture.start(mode: mode)
-            recordingStartedAt = Date()
+            // One-second ticker for the recording clock; skips ticks
+            // while paused so the clock excludes paused time.
+            elapsedTicker = Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    if Task.isCancelled { return }
+                    if isRecording && !isPaused { elapsedSeconds += 1 }
+                }
+            }
             let engineLabel = engineKind == .online ? "在线识别" : "本地识别"
             status = (mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）")
                 + " · \(engineLabel)"
             for await chunk in stream {
+                updateSpectrum(for: chunk)
                 // Live partial subtitles (local engine only — the cloud
                 // engine returns nil here and finalizes per utterance).
                 // A failed append must not kill the session.
@@ -159,7 +208,11 @@ final class MeetingSession: ObservableObject {
         } catch {
             status = "出错：\(error.localizedDescription)"
         }
-        recordingStartedAt = nil
+        elapsedTicker?.cancel()
+        elapsedTicker = nil
+        micSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
+        systemSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
+        isPaused = false
         isRecording = false
     }
 
@@ -235,6 +288,36 @@ final class MeetingSession: ObservableObject {
             print("[MeetingScribe] utterance failed: \(error)")
             clearLivePartial(for: window.source)
         }
+    }
+
+    // MARK: - Spectrum
+
+    /// Per-chunk RMS -> smoothed level -> 28 bars. The bar spread is
+    /// stylized (a sine envelope that drifts with time), scaled by the
+    /// real loudness; it is a level meter, not an FFT.
+    private func updateSpectrum(for chunk: CapturedAudio) {
+        let rms = rootMeanSquare(chunk.samples)
+        spectrumPhase += 0.35
+        if chunk.source == .microphone {
+            micLevel = max(CGFloat(rms), micLevel * 0.92)
+            micSpectrum = bars(level: micLevel)
+        } else {
+            systemLevel = max(CGFloat(rms), systemLevel * 0.92)
+            systemSpectrum = bars(level: systemLevel)
+        }
+    }
+
+    private func bars(level: CGFloat) -> [CGFloat] {
+        (0..<Self.spectrumBarCount).map { i in
+            level * CGFloat(0.3 + 0.7 * abs(sin(spectrumPhase + Double(i) * 0.9)))
+        }
+    }
+
+    private func rootMeanSquare(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        var sum: Float = 0
+        for sample in samples { sum += sample * sample }
+        return sqrt(sum / Float(samples.count))
     }
 
     private func clearLivePartial(for source: AudioSource) {
