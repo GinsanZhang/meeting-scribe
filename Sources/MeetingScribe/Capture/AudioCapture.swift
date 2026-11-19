@@ -156,7 +156,10 @@ private enum MicrophoneTapInstaller {
         converter: AVAudioConverter,
         continuation: AsyncStream<CapturedAudio>.Continuation
     ) {
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+        // 2048 input frames (~43 ms at 48 kHz) keeps the live meter
+        // responsive; 4096 added a visible lag between speaking and
+        // the spectrum moving.
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
             guard let samples = AudioSampleConverter.resampleTo16kMono(buffer, converter: converter)
             else { return }
             continuation.yield(CapturedAudio(samples: samples, source: .microphone))

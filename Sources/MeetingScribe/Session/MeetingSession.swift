@@ -40,6 +40,9 @@ final class MeetingSession: ObservableObject {
     private var runTask: Task<Void, Never>?
     private var lastEmittedEnd: TimeInterval = 0
     private static let spectrumBarCount = 28
+    /// Speech RMS is small (typically 0.01–0.1); without this gain the
+    /// bars sit at the 2 pt floor and the meter looks dead.
+    private static let spectrumGain: CGFloat = 10
     private var elapsedTicker: Task<Void, Never>?
     private var micLevel: CGFloat = 0
     private var systemLevel: CGFloat = 0
@@ -142,6 +145,9 @@ final class MeetingSession: ObservableObject {
     // MARK: - Pipeline
 
     private func runLoop() async {
+        var runError: Error?
+        var windowContinuation: AsyncStream<AudioWindow>.Continuation?
+        var finalizeTask: Task<Void, Never>?
         do {
             status = engineKind == .online
                 ? "正在连接在线识别…"
@@ -164,6 +170,20 @@ final class MeetingSession: ObservableObject {
                 try await diarizer.prepare()
             }
             let stream = try await capture.start(mode: mode)
+            // Finalize runs on its own sequential task. A finalize is
+            // slow — a network round-trip per utterance on the online
+            // engine, plus diarization in-person — and awaiting it
+            // inside the chunk loop froze the spectrum and live
+            // partials for seconds at a time, which reads as "the
+            // meter lags my voice". The queue keeps utterances in
+            // time order while the chunk loop stays real-time.
+            let (windowStream, winContinuation) = AsyncStream<AudioWindow>.makeStream()
+            windowContinuation = winContinuation
+            finalizeTask = Task {
+                for await window in windowStream {
+                    await finalize(window)
+                }
+            }
             // One-second ticker for the recording clock; skips ticks
             // while paused so the clock excludes paused time.
             elapsedTicker = Task {
@@ -195,24 +215,35 @@ final class MeetingSession: ObservableObject {
                     ? micSegmenter.append(chunk.samples, source: .microphone)
                     : systemSegmenter.append(chunk.samples, source: .system)
                 for window in windows {
-                    await finalize(window)
+                    winContinuation.yield(window)
                 }
             }
-            // Stream ended (stop called): transcribe the tails.
+            // Stream ended (stop called): flush the tails into the
+            // queue and let the finalize task finish them.
             status = "正在收尾…"
-            for tail in micSegmenter.flush(source: .microphone) { await finalize(tail) }
-            for tail in systemSegmenter.flush(source: .system) { await finalize(tail) }
+            for tail in micSegmenter.flush(source: .microphone) { winContinuation.yield(tail) }
+            for tail in systemSegmenter.flush(source: .system) { winContinuation.yield(tail) }
             liveMicPartial = ""
             liveSystemPartial = ""
-            status = "已停止，共 \(segments.count) 段"
         } catch {
-            status = "出错：\(error.localizedDescription)"
+            runError = error
         }
+        // Wait for every queued utterance to finish transcribing
+        // before reporting the final count.
+        windowContinuation?.finish()
+        await finalizeTask?.value
+        finalizeTask = nil
+        windowContinuation = nil
         elapsedTicker?.cancel()
         elapsedTicker = nil
         micSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
         systemSpectrum = Array(repeating: 0, count: Self.spectrumBarCount)
         isPaused = false
+        if let runError {
+            status = "出错：\(runError.localizedDescription)"
+        } else {
+            status = "已停止，共 \(segments.count) 段"
+        }
         isRecording = false
     }
 
@@ -308,8 +339,9 @@ final class MeetingSession: ObservableObject {
     }
 
     private func bars(level: CGFloat) -> [CGFloat] {
-        (0..<Self.spectrumBarCount).map { i in
-            level * CGFloat(0.3 + 0.7 * abs(sin(spectrumPhase + Double(i) * 0.9)))
+        let scaled = min(1, level * Self.spectrumGain)
+        return (0..<Self.spectrumBarCount).map { i in
+            scaled * CGFloat(0.3 + 0.7 * abs(sin(spectrumPhase + Double(i) * 0.9)))
         }
     }
 

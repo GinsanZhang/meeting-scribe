@@ -17,7 +17,7 @@ struct SpectrumBarsView: View {
             }
         }
         .frame(height: height)
-        .animation(.easeOut(duration: 0.25), value: bars)
+        .animation(.easeOut(duration: 0.15), value: bars)
     }
 }
 
