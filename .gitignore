@@ -27,6 +27,7 @@ xcuserdata/
 .swiftpm/
 Packages/
 Package.resolved
+.build/
 
 # Models & local data (downloaded at runtime, never committed)
 *.bin

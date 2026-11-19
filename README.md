@@ -49,7 +49,23 @@ System audio ────┘
 
 ## Status
 
-Just started — repo created, scaffolding next.
+v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
+
+- **Capture**: mic via AVAudioEngine, system audio via ScreenCaptureKit (audio-only stream), both converted to 16 kHz mono
+- **Transcription**: WhisperKit (on-device Whisper, Core ML) on 6 s windows with 1 s overlap
+- **Diarization**: SpeakerKit (Pyannote backend) on the same chunks for in-person meetings, aligned onto the transcript by time overlap; online meetings use the mic-vs-system channel split
+- **Summary**: local Ollama, or OpenRouter / SiliconFlow via OpenAI-compatible chat completions; keys in the Keychain
+- **UI**: SwiftUI — record/stop, live transcript with speaker chips, summary pane, settings (provider, models, keys, expected speaker count)
+
+### Build
+
+```sh
+open Package.swift   # in Xcode 16+, macOS 14+
+```
+
+Select the MeetingScribe scheme and run. First run downloads the Whisper model (~145 MB for base) and the SpeakerKit models from Hugging Face, then works offline. First run will also prompt for microphone and screen recording permission.
+
+> Note: this scaffold was written on a Linux machine with no Xcode, so it has **not been compiled yet**. The WhisperKit/SpeakerKit call sites were verified against the Argmax source (argmax-oss-swift 1.0.0), but the first Xcode build is the real check — expect a few API nits, most likely in `Capture/AudioCapture.swift` (CMSampleBuffer conversion) and the `WhisperKit(WhisperKitConfig(...))` initializer. Paste the build errors back and they will be fixed.
 
 ## License
 
