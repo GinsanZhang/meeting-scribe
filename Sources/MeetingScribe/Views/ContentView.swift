@@ -10,6 +10,7 @@ struct ContentView: View {
             header
             Divider()
             transcriptList
+            livePartialFooter
             Divider()
             summarySection
         }
@@ -57,7 +58,7 @@ struct ContentView: View {
 
     private var transcriptList: some View {
         Group {
-            if session.segments.isEmpty && session.liveMicPartial.isEmpty && session.liveSystemPartial.isEmpty {
+            if session.segments.isEmpty {
                 ContentUnavailableView(
                     "还没有转录内容",
                     systemImage: "waveform",
@@ -65,56 +66,26 @@ struct ContentView: View {
                 )
             } else {
                 ScrollViewReader { proxy in
-                    List {
-                        ForEach(session.segments) { segment in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(formatTime(segment.start))
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 40, alignment: .leading)
-                                Text(segment.speaker.displayName)
-                                    .font(.caption.bold())
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(speakerColor(segment.speaker).opacity(0.15))
-                                    .foregroundStyle(speakerColor(segment.speaker))
-                                    .clipShape(.capsule)
-                                Text(segment.text)
-                            }
-                            .id(segment.id)
+                    List(session.segments) { segment in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(formatTime(segment.start))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 40, alignment: .leading)
+                            Text(segment.speaker.displayName)
+                                .font(.caption.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(speakerColor(segment.speaker).opacity(0.15))
+                                .foregroundStyle(speakerColor(segment.speaker))
+                                .clipShape(.capsule)
+                            Text(segment.text)
                         }
-                        // Live partial subtitles (local engine only):
-                        // the running hypothesis for the utterance still
-                        // being spoken, greyed-out until it is finalized
-                        // into a segment above.
-                        if !session.liveMicPartial.isEmpty {
-                            livePartialRow(
-                                text: session.liveMicPartial,
-                                speaker: session.mode == .inPerson ? .unknown : .you,
-                                id: "live-partial-mic"
-                            )
-                        }
-                        if !session.liveSystemPartial.isEmpty {
-                            livePartialRow(
-                                text: session.liveSystemPartial,
-                                speaker: .other,
-                                id: "live-partial-system"
-                            )
-                        }
+                        .id(segment.id)
                     }
                     .onChange(of: session.segments.count) { _, _ in
                         if let last = session.segments.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: session.liveMicPartial) { _, _ in
-                        if !session.liveMicPartial.isEmpty {
-                            proxy.scrollTo("live-partial-mic", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: session.liveSystemPartial) { _, _ in
-                        if !session.liveSystemPartial.isEmpty {
-                            proxy.scrollTo("live-partial-system", anchor: .bottom)
                         }
                     }
                 }
@@ -122,7 +93,36 @@ struct ContentView: View {
         }
     }
 
-    private func livePartialRow(text: String, speaker: SpeakerLabel, id: String) -> some View {
+    /// Live partial subtitles (local engine only) as a fixed footer
+    /// under the list, not rows inside it. The partial text updates
+    /// several times a second while someone is speaking; keeping it
+    /// out of the List avoids rows appearing/disappearing plus
+    /// scrollTo calls during layout, which crashed the app
+    /// (EXC_BAD_ACCESS in SwiftUI's view update on 2026-11-19).
+    private var livePartialFooter: some View {
+        Group {
+            if !session.liveMicPartial.isEmpty || !session.liveSystemPartial.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !session.liveMicPartial.isEmpty {
+                        livePartialRow(
+                            text: session.liveMicPartial,
+                            speaker: session.mode == .inPerson ? .unknown : .you
+                        )
+                    }
+                    if !session.liveSystemPartial.isEmpty {
+                        livePartialRow(
+                            text: session.liveSystemPartial,
+                            speaker: .other
+                        )
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func livePartialRow(text: String, speaker: SpeakerLabel) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("实时")
                 .font(.caption.monospaced())
@@ -138,7 +138,6 @@ struct ContentView: View {
             Text(text)
                 .foregroundStyle(.secondary)
         }
-        .id(id)
     }
 
     private var summarySection: some View {
