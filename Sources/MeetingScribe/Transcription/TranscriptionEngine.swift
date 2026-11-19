@@ -11,28 +11,30 @@ enum TranscriptionError: Error, LocalizedError {
 }
 
 protocol TranscriptionEngine: Actor {
-    func prepare() async throws
+    /// `model` is the WhisperKit model id, e.g. "openai_whisper-small".
+    /// Takes effect on first call; later calls with a different model
+    /// reload the pipeline.
+    func prepare(model: String) async throws
     /// Transcribe 16 kHz mono samples. Segment start/end are relative
     /// to the start of `samples`.
     func transcribe(samples: [Float]) async throws -> [TranscriptionResult]
 }
 
 /// On-device Whisper via WhisperKit (Core ML on the Neural Engine).
-/// Default model is the multilingual base (~145 MB); switch to
+/// Default model is the multilingual small (~466 MB); switch to
 /// "large-v3-v20240930_626MB" in Settings for maximum accuracy,
 /// "openai_whisper-tiny" for the fastest debug loop.
+/// Note: always use a multilingual model, never a `.en` variant —
+/// meetings are in Chinese.
 actor WhisperKitEngine: TranscriptionEngine {
     private var pipe: WhisperKit?
-    private let model: String
+    private var loadedModel: String?
 
-    init(model: String = "openai_whisper-base") {
-        self.model = model
-    }
-
-    func prepare() async throws {
-        if pipe != nil { return }
+    func prepare(model: String) async throws {
+        if pipe != nil, loadedModel == model { return }
         let config = WhisperKitConfig(model: model, verbose: false, prewarm: true, load: true)
         pipe = try await WhisperKit(config)
+        loadedModel = model
     }
 
     func transcribe(samples: [Float]) async throws -> [TranscriptionResult] {

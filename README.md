@@ -57,6 +57,12 @@ v1 scaffold landed (2026-11-19): SwiftPM package, macOS 14+, Swift 6.
 - **Summary**: local Ollama, or OpenRouter / SiliconFlow via OpenAI-compatible chat completions; keys in the Keychain
 - **UI**: SwiftUI — record/stop, live transcript with speaker chips, summary pane, settings (provider, models, keys, expected speaker count)
 
+### Decisions (2026-11-19)
+
+- **Machine**: MacBook Pro M5 Pro, 24 GB — Whisper default is `small` (multilingual), `large-v3-turbo` available in Settings; local Ollama default is Qwen2.5-7B, which fits comfortably in 24 GB unified memory.
+- **Meeting apps**: 企业微信 + 腾讯会议 — capture is via ScreenCaptureKit system audio + mic, which works with any app. The Accessibility trick of reading speaker names from the meeting UI (Yogurt's approach) is only verified for Zoom/Teams/Meet, so it is **not** used here; speaker separation comes from the channel split (online) and SpeakerKit diarization (in-person).
+- **Language**: Chinese — all models are multilingual (never `.en` variants); summarization defaults to Qwen models.
+
 ### Build
 
 ```sh

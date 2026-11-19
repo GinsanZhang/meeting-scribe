@@ -75,7 +75,9 @@ final class MeetingSession: ObservableObject {
     private func runLoop() async {
         do {
             status = "正在加载模型…（首次运行会下载 Whisper 模型）"
-            try await transcriber.prepare()
+            let whisperModel = UserDefaults.standard.string(forKey: SettingsKey.whisperModel)
+                ?? "openai_whisper-small"
+            try await transcriber.prepare(model: whisperModel)
             if mode == .inPerson {
                 try await diarizer.prepare()
             }

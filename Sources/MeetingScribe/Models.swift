@@ -63,7 +63,7 @@ enum SummaryProvider: String, CaseIterable, Identifiable {
 
     var defaultModel: String {
         switch self {
-        case .ollama: return "qwen2.5:3b"
+        case .ollama: return "qwen2.5:7b"
         case .openRouter: return "qwen/qwen2.5-7b-instruct"
         case .siliconFlow: return "Qwen/Qwen2.5-7B-Instruct"
         }
