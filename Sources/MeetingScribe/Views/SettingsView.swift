@@ -65,7 +65,7 @@ struct SettingsView: View {
                         saved: $siliconFlowKeySaved,
                         account: SummaryProvider.siliconFlow.rawValue
                     )
-                    Text("在线识别调用硅基流动的 Qwen3-ASR-1.7B，按音频时长计费；每 6 秒音频发一次请求，有几秒延迟。")
+                    Text("在线识别调用硅基流动的 Qwen3-ASR-1.7B，按音频时长计费；按自然语句切分后逐句发送，有几秒延迟。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

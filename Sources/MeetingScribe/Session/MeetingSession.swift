@@ -10,6 +10,9 @@ final class MeetingSession: ObservableObject {
     @Published private(set) var summary = ""
     @Published private(set) var isSummarizing = false
     @Published private(set) var status = "就绪"
+    /// When the audio stream actually started (nil while preparing or
+    /// stopped). Drives the elapsed-time recording indicator.
+    @Published private(set) var recordingStartedAt: Date?
     /// Live partial subtitles, one per audio channel (online meetings
     /// have two). The local engine updates them as speech arrives;
     /// the cloud engine leaves them empty and finalizes per utterance.
@@ -40,6 +43,7 @@ final class MeetingSession: ObservableObject {
         summary = ""
         liveMicPartial = ""
         liveSystemPartial = ""
+        recordingStartedAt = nil
         lastEmittedEnd = 0
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
@@ -120,6 +124,7 @@ final class MeetingSession: ObservableObject {
                 try await diarizer.prepare()
             }
             let stream = try await capture.start(mode: mode)
+            recordingStartedAt = Date()
             let engineLabel = engineKind == .online ? "在线识别" : "本地识别"
             status = (mode == .online ? "录音中：麦克风 + 系统音" : "录音中：麦克风（线下会议）")
                 + " · \(engineLabel)"
@@ -154,6 +159,7 @@ final class MeetingSession: ObservableObject {
         } catch {
             status = "出错：\(error.localizedDescription)"
         }
+        recordingStartedAt = nil
         isRecording = false
     }
 
