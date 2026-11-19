@@ -1,6 +1,6 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 /// One chunk of 16 kHz mono audio from a single source.
 struct CapturedAudio: Sendable {
@@ -25,7 +25,8 @@ enum CaptureError: Error, LocalizedError {
 /// Captures microphone (AVAudioEngine) and, for online meetings, system audio
 /// (ScreenCaptureKit). Both are converted to 16 kHz mono Float and delivered
 /// on a single AsyncStream. One instance per recording session.
-final class AudioCaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
+@MainActor
+final class AudioCaptureEngine: NSObject, @preconcurrency SCStreamDelegate, @preconcurrency SCStreamOutput {
     private let engine = AVAudioEngine()
     private var stream: SCStream?
     private var micConverter: AVAudioConverter?
@@ -79,7 +80,20 @@ final class AudioCaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
     // MARK: - System audio (ScreenCaptureKit)
 
     private func startSystemAudio() async throws {
-        let content = try await SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content: SCShareableContent = try await withCheckedThrowingContinuation { continuation in
+            SCShareableContent.getExcludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            ) { content, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let content {
+                    continuation.resume(returning: content)
+                } else {
+                    continuation.resume(throwing: CaptureError.noDisplay)
+                }
+            }
+        }
         guard let display = content.displays.first else { throw CaptureError.noDisplay }
         // Audio-only capture: no video frames are requested.
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
@@ -90,7 +104,7 @@ final class AudioCaptureEngine: NSObject, SCStreamDelegate, SCStreamOutput {
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         self.stream = stream
         try stream.addStreamOutput(
-            self, type: .audio,
+            self, type: SCStreamOutputType.audio,
             sampleHandlerQueue: DispatchQueue(label: "meeting-scribe.system-audio")
         )
         try await stream.startCapture()
@@ -165,9 +179,15 @@ enum AudioSampleConverter {
         var blockBuffer: CMBlockBuffer?
         let status = listBytes.withUnsafeMutableBytes { rawPtr in
             CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-                sampleBuffer, nil,
+                sampleBuffer,
+                bufferListSizeNeededOut: nil,
+                bufferListOut:
                 rawPtr.baseAddress!.assumingMemoryBound(to: AudioBufferList.self),
-                listCapacity, nil, nil, 0, &blockBuffer)
+                bufferListSize: listCapacity,
+                blockBufferAllocator: nil,
+                blockBufferMemoryAllocator: nil,
+                flags: 0,
+                blockBufferOut: &blockBuffer)
         }
         guard status == noErr else { return nil }
 
@@ -210,10 +230,10 @@ enum AudioSampleConverter {
         let byteCount = min(Int(buffer.mDataByteSize), frames * bytesPerSample)
         if isFloat {
             guard let dst = pcmBuffer.floatChannelData?[channel] else { return }
-            src.copyMemory(to: dst, byteCount: byteCount)
+            dst.update(from: src.assumingMemoryBound(to: Float.self), count: byteCount / MemoryLayout<Float>.size)
         } else {
             guard let dst = pcmBuffer.int16ChannelData?[channel] else { return }
-            src.copyMemory(to: dst, byteCount: byteCount)
+            dst.update(from: src.assumingMemoryBound(to: Int16.self), count: byteCount / MemoryLayout<Int16>.size)
         }
     }
 
