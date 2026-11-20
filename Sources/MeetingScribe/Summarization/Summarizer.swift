@@ -16,6 +16,10 @@ enum SummaryError: Error, LocalizedError {
 
 protocol Summarizer: Sendable {
     func summarize(transcript: String) async throws -> String
+    /// Short live summary for the "实时摘要" bar: 1–2 sentences plus
+    /// up to 3 key points under a `## 要点` heading. Same provider,
+    /// much shorter prompt and answer than the full summary.
+    func summarizeLive(transcript: String) async throws -> String
 }
 
 enum SummarizerFactory {
@@ -32,6 +36,17 @@ enum SummarizerFactory {
             )
         }
     }
+}
+
+private func liveSummaryPrompt(for transcript: String) -> String {
+    """
+    以下是一次正在进行中的会议的文字记录（截至目前）。请用中文输出：
+    先用一到两句话概括到目前为止会议在说什么，然后在"## 要点"小节下列出最多 3 个要点（每点一行，以"- "开头）。
+    只根据记录内容，不要编造。如果记录太少无法总结，只输出"内容还太少"。
+
+    会议记录：
+    \(transcript)
+    """
 }
 
 private func summaryPrompt(for transcript: String) -> String {
@@ -57,12 +72,20 @@ struct OpenAICompatibleSummarizer: Summarizer {
     let providerName: String
 
     func summarize(transcript: String) async throws -> String {
+        try await complete(prompt: summaryPrompt(for: transcript))
+    }
+
+    func summarizeLive(transcript: String) async throws -> String {
+        try await complete(prompt: liveSummaryPrompt(for: transcript))
+    }
+
+    private func complete(prompt: String) async throws -> String {
         guard let apiKey, !apiKey.isEmpty else {
             throw SummaryError.missingAPIKey(provider: providerName)
         }
         let requestBody = ChatCompletionsRequest(
             model: model,
-            messages: [ChatMessage(role: "user", content: summaryPrompt(for: transcript))]
+            messages: [ChatMessage(role: "user", content: prompt)]
         )
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
@@ -112,9 +135,17 @@ struct OllamaSummarizer: Summarizer {
     private let url = URL(string: "http://localhost:11434/api/chat")!
 
     func summarize(transcript: String) async throws -> String {
+        try await complete(prompt: summaryPrompt(for: transcript))
+    }
+
+    func summarizeLive(transcript: String) async throws -> String {
+        try await complete(prompt: liveSummaryPrompt(for: transcript))
+    }
+
+    private func complete(prompt: String) async throws -> String {
         let requestBody = OllamaChatRequest(
             model: model,
-            messages: [ChatMessage(role: "user", content: summaryPrompt(for: transcript))],
+            messages: [ChatMessage(role: "user", content: prompt)],
             stream: false
         )
         var request = URLRequest(url: url)

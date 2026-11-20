@@ -480,6 +480,7 @@ struct ContentView: View {
                     .fontWeight(.semibold)
                 Text(realtimeSummaryText)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption)
@@ -496,6 +497,14 @@ struct ContentView: View {
     }
 
     private var realtimeSummaryText: String {
+        // While recording, the live summary is the freshest content.
+        // After stop, the final summary (key points / "已生成总结")
+        // takes over.
+        if session.isRecording, !session.liveSummary.isEmpty {
+            let points = session.liveKeyPoints.isEmpty
+                ? "" : " · 已识别 \(session.liveKeyPoints.count) 个要点"
+            return "\(session.liveSummary)\(points)"
+        }
         if !session.keyPoints.isEmpty {
             return "识别到 \(session.keyPoints.count) 个要点…"
         }
@@ -503,10 +512,10 @@ struct ContentView: View {
             return "已生成总结，点击查看"
         }
         if session.isRecording {
-            return "转录中，生成总结后要点会出现在这里…"
+            return "转录已有 \(session.segments.count) 段，实时摘要每 5 段自动更新…"
         }
         if !session.segments.isEmpty {
-            return "转录已有 \(session.segments.count) 段，点「生成总结」"
+            return "转录已有 \(session.segments.count) 段，正在自动生成总结…"
         }
         return "开始录音后，这里会显示实时要点"
     }

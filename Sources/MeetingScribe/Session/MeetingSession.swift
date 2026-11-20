@@ -39,6 +39,16 @@ final class MeetingSession: ObservableObject {
     /// SummaryParsing); empty until a summary exists.
     @Published private(set) var keyPoints: [String] = []
     @Published private(set) var todos: [TodoItem] = []
+    /// Short live summary for the "实时摘要" bar, refreshed every 5
+    /// finalized segments while recording. Empty until the first
+    /// refresh succeeds.
+    @Published private(set) var liveSummary = ""
+    /// Key points parsed out of the latest live summary.
+    @Published private(set) var liveKeyPoints: [String] = []
+    /// Segments covered by the last live-summary refresh, so a refresh
+    /// never re-summarizes the same transcript twice.
+    private var liveSummarySegmentCount = 0
+    private var isRefreshingLiveSummary = false
 
     /// Whether the current meeting is bookmarked (the workbench
     /// header's bookmark icon). Saved with the meeting.
@@ -101,6 +111,9 @@ final class MeetingSession: ObservableObject {
         meetingTitle = Self.defaultMeetingTitle()
         keyPoints = []
         todos = []
+        liveSummary = ""
+        liveKeyPoints = []
+        liveSummarySegmentCount = 0
         isBookmarked = false
         savedMeetingId = nil
         engineKind = TranscriptionEngineKind(
@@ -139,32 +152,79 @@ final class MeetingSession: ObservableObject {
             + " · \(engineLabel)"
     }
 
-    func generateSummary() {
+    /// Builds the summarizer from the user's Settings (provider,
+    /// model, Keychain key). Shared by the full summary and the live
+    /// summary so the two never drift apart.
+    private func makeSummarizer() -> any Summarizer {
+        let provider = SummaryProvider(
+            rawValue: UserDefaults.standard.string(forKey: SettingsKey.summaryProvider) ?? ""
+        ) ?? .ollama
+        let modelKey: String
+        switch provider {
+        case .ollama: modelKey = SettingsKey.ollamaModel
+        case .openRouter: modelKey = SettingsKey.openRouterModel
+        case .siliconFlow: modelKey = SettingsKey.siliconFlowModel
+        }
+        let model = UserDefaults.standard.string(forKey: modelKey) ?? provider.defaultModel
+        let apiKey = provider.needsAPIKey
+            ? KeychainStore.read(account: provider.rawValue) : nil
+        return SummarizerFactory.make(provider: provider, model: model, apiKey: apiKey)
+    }
+
+    /// Manual (button) or automatic (after stop) full summary.
+    /// `auto` failures stay silent: a failed auto-summary leaves the
+    /// summary empty so the 生成总结 button is still there to retry,
+    /// instead of writing "总结失败" into the saved meeting.
+    func generateSummary(auto: Bool = false) {
         guard !segments.isEmpty, !isSummarizing else { return }
         isSummarizing = true
         Task {
             defer { isSummarizing = false }
             do {
-                let provider = SummaryProvider(
-                    rawValue: UserDefaults.standard.string(forKey: SettingsKey.summaryProvider) ?? ""
-                ) ?? .ollama
-                let modelKey: String
-                switch provider {
-                case .ollama: modelKey = SettingsKey.ollamaModel
-                case .openRouter: modelKey = SettingsKey.openRouterModel
-                case .siliconFlow: modelKey = SettingsKey.siliconFlowModel
-                }
-                let model = UserDefaults.standard.string(forKey: modelKey) ?? provider.defaultModel
-                let apiKey = provider.needsAPIKey
-                    ? KeychainStore.read(account: provider.rawValue) : nil
-                let summarizer = SummarizerFactory.make(provider: provider, model: model, apiKey: apiKey)
+                let summarizer = makeSummarizer()
                 summary = try await summarizer.summarize(transcript: transcriptText)
                 updateDerivedSummary()
                 // A summary generated after the recording stopped still
                 // belongs to the saved meeting: write it back.
                 persistCurrentMeeting()
             } catch {
-                summary = "总结失败：\(error.localizedDescription)"
+                if auto {
+                    print("[MeetingScribe] auto summary failed: \(error.localizedDescription)")
+                } else {
+                    summary = "总结失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    /// Refreshes the live summary in the background: a short summary
+    /// of the transcript so far plus up to 3 key points. Called every
+    /// 5 finalized segments while recording. A failure is silent —
+    /// the bar keeps the previous live summary (or the segment-count
+    /// prompt) and the final summary is the fallback.
+    func refreshLiveSummary() {
+        guard isRecording, !segments.isEmpty, !isRefreshingLiveSummary,
+              segments.count > liveSummarySegmentCount else { return }
+        isRefreshingLiveSummary = true
+        liveSummarySegmentCount = segments.count
+        let transcript = transcriptText
+        Task {
+            defer { isRefreshingLiveSummary = false }
+            do {
+                let summarizer = makeSummarizer()
+                let result = try await summarizer.summarizeLive(transcript: transcript)
+                // The live answer is "1–2 sentences + ## 要点 bullets".
+                // Keep the sentences as the bar text, the bullets as
+                // the key-point count. "内容还太少" means: not enough
+                // to summarize yet — keep the previous text.
+                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, trimmed != "内容还太少" else { return }
+                liveKeyPoints = parseKeyPoints(from: result)
+                let head = result.components(separatedBy: "## 要点").first?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !head.isEmpty { liveSummary = head }
+            } catch {
+                print("[MeetingScribe] live summary failed: \(error.localizedDescription)")
             }
         }
     }
@@ -353,6 +413,14 @@ final class MeetingSession: ObservableObject {
         // the sidebar's 最近 / 会议库 can open it later.
         if !segments.isEmpty {
             persistCurrentMeeting()
+            // Auto-generate the final summary: the user shouldn't have
+            // to click 生成总结 after every meeting. Only when nothing
+            // was generated yet (a manual summary during recording is
+            // kept). A failed auto-summary stays silent and leaves the
+            // button available to retry.
+            if summary.isEmpty {
+                generateSummary(auto: true)
+            }
         }
     }
 
@@ -423,6 +491,12 @@ final class MeetingSession: ObservableObject {
             ))
             lastEmittedEnd = max(lastEmittedEnd, end)
             clearLivePartial(for: window.source)
+            // Every 5 finalized segments, refresh the live summary in
+            // the background: the "实时摘要" bar shows real content
+            // instead of only prompting for a manual summary.
+            if segments.count % 5 == 0 {
+                refreshLiveSummary()
+            }
         } catch {
             // A single utterance failing must not kill the session.
             print("[MeetingScribe] utterance failed: \(error)")
