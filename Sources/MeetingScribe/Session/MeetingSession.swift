@@ -53,6 +53,16 @@ final class MeetingSession: ObservableObject {
     private var liveSummaryElapsedAt = 0
     private var isRefreshingLiveSummary = false
 
+    /// Live-summary max interval, from Settings → 实时性 slider
+    /// (30–120 s, default 60). Read live on every ticker tick, so
+    /// changing it in Settings takes effect within a second, even
+    /// mid-recording. Clamped so a stale stored value can't spam
+    /// the summary service or stall the summary.
+    private var liveSummaryInterval: Int {
+        let raw = UserDefaults.standard.object(forKey: SettingsKey.liveSummaryIntervalSeconds) as? Double ?? 60
+        return Int(min(max(raw, 30), 120))
+    }
+
     /// Whether the current meeting is bookmarked (the workbench
     /// header's bookmark icon). Saved with the meeting.
     @Published var isBookmarked = false
@@ -361,14 +371,15 @@ final class MeetingSession: ObservableObject {
                     if Task.isCancelled { return }
                     if isRecording && !isPaused {
                         elapsedSeconds += 1
-                        // Live summary at most 60 s apart: if new
-                        // segments arrived but fewer than 5, the
-                        // count trigger hasn't fired — refresh on
-                        // time instead, so a slow meeting still gets
-                        // a fresh summary within a minute.
+                        // Live summary at most `liveSummaryInterval`
+                        // apart: if new segments arrived but fewer
+                        // than 5, the count trigger hasn't fired —
+                        // refresh on time instead, so a slow meeting
+                        // still gets a fresh summary within the
+                        // configured interval.
                         if !segments.isEmpty,
                            segments.count > liveSummarySegmentCount,
-                           elapsedSeconds - liveSummaryElapsedAt >= 60 {
+                           elapsedSeconds - liveSummaryElapsedAt >= liveSummaryInterval {
                             refreshLiveSummary()
                         }
                     }

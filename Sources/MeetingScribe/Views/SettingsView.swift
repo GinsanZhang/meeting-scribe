@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var session: MeetingSession
     @AppStorage(SettingsKey.meetingMode) private var modeRaw = MeetingMode.online.rawValue
+    @AppStorage(SettingsKey.maxSpeechSeconds) private var maxSpeechSeconds = 5.0
+    @AppStorage(SettingsKey.liveSummaryIntervalSeconds) private var liveSummaryIntervalSeconds = 60.0
     @AppStorage(SettingsKey.summaryProvider) private var providerRaw = SummaryProvider.ollama.rawValue
     @AppStorage(SettingsKey.ollamaModel) private var ollamaModel = SummaryProvider.ollama.defaultModel
     @AppStorage(SettingsKey.openRouterModel) private var openRouterModel = SummaryProvider.openRouter.defaultModel
@@ -137,6 +139,36 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+
+            Section("实时性") {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("转录单段最长")
+                        Spacer()
+                        Text("\(Int(maxSpeechSeconds)) 秒")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $maxSpeechSeconds, in: 3...10, step: 1)
+                    Text("一句话说很久也不等：到这个时长就切一段出文字。太短会把话切得太碎、请求变多。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("实时摘要最长间隔")
+                        Spacer()
+                        Text("\(Int(liveSummaryIntervalSeconds)) 秒")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $liveSummaryIntervalSeconds, in: 30...120, step: 10)
+                    Text("攒够 5 段就刷，没攒够时最久隔这么久也刷一次。太短会频繁调总结服务。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("转录那项下次录音生效；摘要间隔改完立即生效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("线下会议") {

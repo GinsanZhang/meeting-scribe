@@ -18,6 +18,15 @@ struct AudioWindow: Sendable {
 final class VadSegmenter {
     private var vad: SherpaOnnxVoiceActivityDetectorWrapper?
 
+    /// Longest single utterance, from Settings → 实时性 slider
+    /// (3–10 s, default 5). Read at prepare() time, so it applies
+    /// from the next recording. Clamped so a stale stored value
+    /// can't fragment speech or stall it.
+    static var maxSpeechSeconds: Double {
+        let raw = UserDefaults.standard.object(forKey: SettingsKey.maxSpeechSeconds) as? Double ?? 5
+        return min(max(raw, 3), 10)
+    }
+
     /// Load the VAD model, downloading it first if needed (~2 MB).
     /// Must be called before `append`.
     func prepare() async throws {
@@ -37,12 +46,16 @@ final class VadSegmenter {
                 minSilenceDuration: 0.3,
                 minSpeechDuration: 0.25,
                 windowSize: 512,
-                // A long monologue is cut at 5 s so the transcript
-                // never lags more than ~5 s behind the speaker: a
-                // chunk is finalized ~1–2 s after its 5 s cut on the
+                // A long monologue is cut at the Settings → 实时性
+                // value (3–10 s, default 5) so the transcript never
+                // lags more than ~that long behind the speaker: a
+                // chunk is finalized ~1–2 s after its cut on the
                 // online engine (faster locally), instead of one
                 // recognition unit growing unbounded until they stop.
-                maxSpeechDuration: 5
+                // Clamped: a stale value can't fragment speech or
+                // stall it. Applies from the next recording (the
+                // segmenters are built per recording).
+                maxSpeechDuration: Float(Self.maxSpeechSeconds)
             )
         )
         vad = SherpaOnnxVoiceActivityDetectorWrapper(config: &modelConfig, buffer_size_in_seconds: 60)

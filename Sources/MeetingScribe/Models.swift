@@ -109,4 +109,10 @@ enum SettingsKey {
     static let expectedSpeakers = "expectedSpeakers"
     static let meetingMode = "meetingMode"
     static let appearance = "appearance"
+    /// Real-time latency bounds (Settings → 实时性 sliders, Double).
+    /// maxSpeechSeconds: longest VAD utterance, 3–10 s, default 5.
+    /// liveSummaryIntervalSeconds: longest gap between live-summary
+    /// refreshes, 30–120 s, default 60.
+    static let maxSpeechSeconds = "maxSpeechSeconds"
+    static let liveSummaryIntervalSeconds = "liveSummaryIntervalSeconds"
 }
