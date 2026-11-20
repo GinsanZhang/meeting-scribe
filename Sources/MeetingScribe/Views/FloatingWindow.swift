@@ -50,5 +50,9 @@ struct BorderlessWindowConfigurator: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Re-apply the level when it changes at runtime (the top bar's
+        // pin toggle switches between floating and normal).
+        if let level { nsView.window?.level = level }
+    }
 }

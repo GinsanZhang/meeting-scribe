@@ -29,6 +29,20 @@ final class MeetingSession: ObservableObject {
 
     @Published var mode: MeetingMode = .online
 
+    /// Editable meeting title (the workbench header shows it as a text
+    /// field). Defaults to the start time; saved with the meeting.
+    @Published var meetingTitle = ""
+    /// When the current recording started (for the title, the meta line
+    /// and the saved meeting).
+    @Published private(set) var startedAt: Date?
+    /// Key points and todos parsed out of the summary (see
+    /// SummaryParsing); empty until a summary exists.
+    @Published private(set) var keyPoints: [String] = []
+    @Published private(set) var todos: [TodoItem] = []
+
+    /// Distinct speakers in the current transcript, for the "N 人" badge.
+    var speakerCount: Int { Set(segments.map(\.speaker.id)).count }
+
     private let capture = AudioCaptureEngine()
     private let localMicEngine = SherpaOnnxTranscriptionEngine()
     private let localSystemEngine = SherpaOnnxTranscriptionEngine()
@@ -47,6 +61,9 @@ final class MeetingSession: ObservableObject {
     private var micLevel: CGFloat = 0
     private var systemLevel: CGFloat = 0
     private var spectrumPhase = 0.0
+    /// The library id of the meeting this recording is being saved as
+    /// (set on the first persist, so later updates replace it).
+    private var savedMeetingId: UUID?
 
     var transcriptText: String {
         segments.map { "[\(formatTime($0.start))] \($0.speaker.displayName)：\($0.text)" }
@@ -69,6 +86,11 @@ final class MeetingSession: ObservableObject {
         micLevel = 0
         systemLevel = 0
         lastEmittedEnd = 0
+        startedAt = Date()
+        meetingTitle = defaultMeetingTitle()
+        keyPoints = []
+        todos = []
+        savedMeetingId = nil
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
         ) ?? .online
@@ -125,10 +147,72 @@ final class MeetingSession: ObservableObject {
                     ? KeychainStore.read(account: provider.rawValue) : nil
                 let summarizer = SummarizerFactory.make(provider: provider, model: model, apiKey: apiKey)
                 summary = try await summarizer.summarize(transcript: transcriptText)
+                updateDerivedSummary()
+                // A summary generated after the recording stopped still
+                // belongs to the saved meeting: write it back.
+                persistCurrentMeeting()
             } catch {
                 summary = "总结失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    /// Toggles a parsed todo's checkmark and writes it back to the
+    /// saved meeting, so the check survives reopening the meeting.
+    func toggleTodo(_ id: UUID) {
+        guard let index = todos.firstIndex(where: { $0.id == id }) else { return }
+        todos[index].done.toggle()
+        persistCurrentMeeting()
+    }
+
+    /// Rebuilds the saved meeting from the current session state and
+    /// writes it to the library (insert on stop, update after a
+    /// summary is generated or a todo is toggled). Done flags survive
+    /// a re-parse by matching todo text.
+    private func persistCurrentMeeting() {
+        guard let startedAt, !segments.isEmpty else { return }
+        let id = savedMeetingId ?? UUID()
+        savedMeetingId = id
+        let doneTexts = Set(todos.filter(\.done).map(\.text))
+        let meeting = SavedMeeting(
+            id: id,
+            title: meetingTitle,
+            startedAt: startedAt,
+            endedAt: Date(),
+            mode: mode.rawValue,
+            engine: engineBadge,
+            segments: segments.map { segment in
+                SavedSegment(
+                    id: segment.id,
+                    text: segment.text,
+                    start: segment.start,
+                    end: segment.end,
+                    speakerId: segment.speaker.id,
+                    speakerName: segment.speaker.displayName,
+                    source: segment.source.rawValue
+                )
+            },
+            summary: summary,
+            keyPoints: keyPoints,
+            todos: todos.map { TodoItem(id: $0.id, text: $0.text, done: doneTexts.contains($0.text)) }
+        )
+        MeetingStore.shared.save(meeting)
+    }
+
+    /// Parses key points / todos out of the fresh summary, keeping the
+    /// checked state of todos that survived the re-parse.
+    private func updateDerivedSummary() {
+        keyPoints = parseKeyPoints(from: summary)
+        let doneTexts = Set(todos.filter(\.done).map(\.text))
+        todos = parseTodos(from: summary).map { item in
+            TodoItem(id: item.id, text: item.text, done: doneTexts.contains(item.text))
+        }
+    }
+
+    private func defaultMeetingTitle() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return "会议 \(formatter.string(from: Date()))"
     }
 
     /// One streaming recognizer per audio channel. A single sherpa
@@ -245,6 +329,11 @@ final class MeetingSession: ObservableObject {
             status = "已停止，共 \(segments.count) 段"
         }
         isRecording = false
+        // Save the finished meeting (if anything was transcribed) so
+        // the sidebar's 最近 / 会议库 can open it later.
+        if !segments.isEmpty {
+            persistCurrentMeeting()
+        }
     }
 
     /// Finalize one VAD utterance: get its text from the engine, diarize

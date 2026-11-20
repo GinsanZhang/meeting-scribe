@@ -32,6 +32,39 @@ struct RecordingIndicator: View {
     }
 }
 
+/// Status dot + elapsed time (mm:ss), shared by the floating capsule
+/// and the top bar. Red and pulsing while recording, amber and still
+/// while paused, grey when idle.
+struct RecordingStatusView: View {
+    @EnvironmentObject var session: MeetingSession
+
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(session.isRecording ? (session.isPaused ? .orange : .red) : .secondary)
+                .frame(width: 7, height: 7)
+                .scaleEffect(session.isRecording && !session.isPaused && pulse ? 1.3 : 1)
+                .opacity(session.isRecording && !session.isPaused && pulse ? 0.55 : 1)
+                .animation(
+                    session.isRecording && !session.isPaused
+                        ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                        : nil,
+                    value: pulse
+                )
+                .onAppear { pulse = true }
+            Text(formatTime(session.elapsedSeconds))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            if session.isPaused {
+                Text("已暂停")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 /// Round recorder-style transport shared by the main window, the
 /// floating capsule and the compact window: a red record circle,
 /// pause/resume, and stop. The record circle doubles as the resume

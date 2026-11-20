@@ -21,17 +21,19 @@ struct MeetingScribeApp: App {
                 .environmentObject(session)
                 .preferredColorScheme(colorScheme)
         }
-        .defaultSize(width: 720, height: 540)
-        // A: floating capsule (372pt) — spectrum + one live line +
+        .defaultSize(width: 1100, height: 700)
+        // A: floating capsule (560pt) — spectrum + one live line +
         // transport, borderless and floating above other apps.
+        // Always dark: the capsule's design is a dark pill on any
+        // desktop, in either app theme.
         Window("MeetingScribe 悬浮胶囊", id: ViewMode.capsule.rawValue) {
             CapsuleView()
                 .environmentObject(session)
-                .preferredColorScheme(colorScheme)
+                .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 372, height: 220)
+        .defaultSize(width: 560, height: 64)
         // B: compact main window (548pt) — the transcript in a
         // smaller titled window.
         Window("MeetingScribe 精简", id: ViewMode.compact.rawValue) {
@@ -42,14 +44,16 @@ struct MeetingScribeApp: App {
         .defaultSize(width: 548, height: 480)
         // C: top floating bar — one thin strip docked at the top
         // center of the screen, floating above other apps.
+        // Always light: the bar's design is a white strip on any
+        // desktop, in either app theme.
         Window("MeetingScribe 顶部悬浮条", id: ViewMode.topBar.rawValue) {
             TopBarView()
                 .environmentObject(session)
-                .preferredColorScheme(colorScheme)
+                .preferredColorScheme(.light)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 720, height: 44)
+        .defaultSize(width: 1200, height: 48)
         // Minimal mode (design mockup plan D): borderless, transparent,
         // single-button transport. Switching to it dismisses the main
         // window; closing it reopens the main window. The window

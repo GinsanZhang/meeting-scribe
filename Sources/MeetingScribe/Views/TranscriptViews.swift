@@ -1,5 +1,34 @@
 import SwiftUI
 
+/// One transcript row for the workbench tabs, whether it comes from
+/// the live session or a saved meeting.
+struct DisplaySegment: Identifiable {
+    let id: UUID
+    let text: String
+    let start: TimeInterval
+    let end: TimeInterval
+    let speakerId: String
+    let speakerName: String
+
+    init(_ segment: TranscriptSegment) {
+        id = segment.id
+        text = segment.text
+        start = segment.start
+        end = segment.end
+        speakerId = segment.speaker.id
+        speakerName = segment.speaker.displayName
+    }
+
+    init(_ segment: SavedSegment) {
+        id = segment.id
+        text = segment.text
+        start = segment.start
+        end = segment.end
+        speakerId = segment.speakerId
+        speakerName = segment.speakerName
+    }
+}
+
 /// Transcript pieces shared by the main window and the compact window,
 /// so both modes show the same list, the same live footer and the same
 /// summary. Moved out of ContentView verbatim — behavior unchanged.
@@ -9,25 +38,31 @@ import SwiftUI
 struct TranscriptListView: View {
     @EnvironmentObject var session: MeetingSession
 
+    /// nil = the live session's segments. Pass saved or filtered
+    /// segments to show a meeting or a search result instead.
+    var segments: [DisplaySegment]? = nil
+    var emptyDescription: String = "点左上角的红色录音圆点，转录会实时出现在这里"
+
     var body: some View {
+        let shown = segments ?? session.segments.map { DisplaySegment($0) }
         Group {
-            if session.segments.isEmpty {
+            if shown.isEmpty {
                 ContentUnavailableView(
                     "还没有转录内容",
                     systemImage: "waveform",
-                    description: Text(session.isRecording ? "正在聆听…" : "点左上角的红色录音圆点，转录会实时出现在这里")
+                    description: Text(session.isRecording ? "正在聆听…" : emptyDescription)
                 )
             } else {
                 ScrollViewReader { proxy in
-                    List(session.segments) { segment in
+                    List(shown) { segment in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Text(segment.speaker.displayName)
+                                Text(segment.speakerName)
                                     .font(.caption.bold())
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(speakerColor(segment.speaker).opacity(0.15))
-                                    .foregroundStyle(speakerColor(segment.speaker))
+                                    .background(speakerColor(for: segment.speakerId).opacity(0.15))
+                                    .foregroundStyle(speakerColor(for: segment.speakerId))
                                     .clipShape(.capsule)
                                 Text(formatTime(segment.start))
                                     .font(.caption.monospaced())
@@ -38,8 +73,8 @@ struct TranscriptListView: View {
                         .padding(.vertical, 2)
                         .id(segment.id)
                     }
-                    .onChange(of: session.segments.count) { _, _ in
-                        if let last = session.segments.last {
+                    .onChange(of: shown.count) { _, _ in
+                        if let last = shown.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
@@ -93,8 +128,8 @@ struct LivePartialFooterView: View {
                 .font(.caption.bold())
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(speakerColor(speaker).opacity(0.15))
-                .foregroundStyle(speakerColor(speaker))
+                .background(speakerColor(for: speaker.id).opacity(0.15))
+                .foregroundStyle(speakerColor(for: speaker.id))
                 .clipShape(.capsule)
             Text(text)
                 .foregroundStyle(.secondary)
@@ -130,15 +165,15 @@ struct SummarySectionView: View {
     }
 }
 
-func speakerColor(_ speaker: SpeakerLabel) -> Color {
-    switch speaker.id {
+func speakerColor(for speakerId: String) -> Color {
+    switch speakerId {
     case "you": return .blue
     case "other": return .green
     case "unknown": return .gray
     default:
         // speaker-0, speaker-1, ... cycle through a small palette.
         let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
-        let index = Int(speaker.id.dropFirst("speaker-".count)) ?? 0
+        let index = Int(speakerId.dropFirst("speaker-".count)) ?? 0
         return palette[index % palette.count]
     }
 }
