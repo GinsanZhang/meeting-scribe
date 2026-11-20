@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct MeetingScribeApp: App {
-    /// One session shared by all five view-mode windows, so
+    /// One session shared by all three view-mode windows, so
     /// recording, pausing and the transcript stay in sync between them.
     @StateObject private var session = MeetingSession()
     @AppStorage(SettingsKey.appearance) private var appearanceRaw = Appearance.system.rawValue
@@ -13,16 +13,16 @@ struct MeetingScribeApp: App {
 
     var body: some Scene {
         // The main window is a single Window (id "main"), not a
-        // WindowGroup: the mini window is a mode switch for it, and
-        // switching dismisses one window while opening the other,
-        // so only one view is ever on screen.
+        // WindowGroup: switching to a floating mode dismisses it
+        // and opens the other window, so only one view is ever on
+        // screen.
         Window("MeetingScribe", id: "main") {
             ContentView()
                 .environmentObject(session)
                 .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 1100, height: 700)
-        // A: floating capsule (560pt) — spectrum + one live line +
+        // Floating capsule (560pt) — spectrum + one live line +
         // transport, borderless and floating above other apps.
         // Always dark: the capsule's design is a dark pill on any
         // desktop, in either app theme.
@@ -34,15 +34,7 @@ struct MeetingScribeApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultSize(width: 560, height: 64)
-        // B: compact main window (548pt) — the transcript in a
-        // smaller titled window.
-        Window("MeetingScribe 精简", id: ViewMode.compact.rawValue) {
-            CompactView()
-                .environmentObject(session)
-                .preferredColorScheme(colorScheme)
-        }
-        .defaultSize(width: 548, height: 480)
-        // C: top floating bar — one thin strip docked at the top
+        // Top floating bar — one thin strip docked at the top
         // center of the screen, floating above other apps.
         // Always light: the bar's design is a white strip on any
         // desktop, in either app theme.
@@ -54,18 +46,6 @@ struct MeetingScribeApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultSize(width: 1200, height: 48)
-        // Minimal mode (design mockup plan D): borderless, transparent,
-        // single-button transport. Switching to it dismisses the main
-        // window; closing it reopens the main window. The window
-        // itself is made borderless by MiniView's configurator.
-        Window("MeetingScribe 极简", id: "mini") {
-            MiniView()
-                .environmentObject(session)
-                .preferredColorScheme(colorScheme)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        .defaultSize(width: 250, height: 250)
     }
 }
 

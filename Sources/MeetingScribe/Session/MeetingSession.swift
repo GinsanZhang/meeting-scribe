@@ -40,6 +40,10 @@ final class MeetingSession: ObservableObject {
     @Published private(set) var keyPoints: [String] = []
     @Published private(set) var todos: [TodoItem] = []
 
+    /// Whether the current meeting is bookmarked (the workbench
+    /// header's bookmark icon). Saved with the meeting.
+    @Published var isBookmarked = false
+
     /// Distinct speakers in the current transcript, for the "N 人" badge.
     var speakerCount: Int { Set(segments.map(\.speaker.id)).count }
 
@@ -70,8 +74,15 @@ final class MeetingSession: ObservableObject {
             .joined(separator: "\n")
     }
 
-    /// Short badge for the mini window, e.g. "在线" / "本地".
+    /// Short badge for the floating windows, e.g. "在线" / "本地".
     var engineBadge: String { engineKind == .online ? "在线" : "本地" }
+
+    init() {
+        // A real title from the start, so the workbench header never
+        // shows the "会议标题" placeholder. start() re-titles per
+        // recording.
+        meetingTitle = Self.defaultMeetingTitle()
+    }
 
     func start() {
         guard !isRecording else { return }
@@ -87,9 +98,10 @@ final class MeetingSession: ObservableObject {
         systemLevel = 0
         lastEmittedEnd = 0
         startedAt = Date()
-        meetingTitle = defaultMeetingTitle()
+        meetingTitle = Self.defaultMeetingTitle()
         keyPoints = []
         todos = []
+        isBookmarked = false
         savedMeetingId = nil
         engineKind = TranscriptionEngineKind(
             rawValue: UserDefaults.standard.string(forKey: SettingsKey.transcriptionEngine) ?? ""
@@ -157,6 +169,13 @@ final class MeetingSession: ObservableObject {
         }
     }
 
+    /// Toggles the bookmark on the current meeting and writes it back
+    /// to the saved meeting, so the mark survives reopening it.
+    func toggleBookmark() {
+        isBookmarked.toggle()
+        persistCurrentMeeting()
+    }
+
     /// Toggles a parsed todo's checkmark and writes it back to the
     /// saved meeting, so the check survives reopening the meeting.
     func toggleTodo(_ id: UUID) {
@@ -194,7 +213,8 @@ final class MeetingSession: ObservableObject {
             },
             summary: summary,
             keyPoints: keyPoints,
-            todos: todos.map { TodoItem(id: $0.id, text: $0.text, done: doneTexts.contains($0.text)) }
+            todos: todos.map { TodoItem(id: $0.id, text: $0.text, done: doneTexts.contains($0.text)) },
+            isBookmarked: isBookmarked
         )
         MeetingStore.shared.save(meeting)
     }
@@ -209,7 +229,7 @@ final class MeetingSession: ObservableObject {
         }
     }
 
-    private func defaultMeetingTitle() -> String {
+    private static func defaultMeetingTitle() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MM-dd HH:mm"
         return "会议 \(formatter.string(from: Date()))"

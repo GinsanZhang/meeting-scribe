@@ -11,8 +11,7 @@ import SwiftUI
 /// Options cover the floating modes: the capsule and the top bar are
 /// `.floating` level so they stay above other apps while a meeting
 /// runs; the top bar additionally docks itself at the top center of
-/// the screen. The mini window keeps its own (proven) configurator
-/// in MiniView.swift and does not use this one.
+/// the screen.
 struct BorderlessWindowConfigurator: NSViewRepresentable {
     var level: NSWindow.Level?
     /// Dock at the top center of the screen, `topGap` below the menu bar.

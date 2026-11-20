@@ -18,6 +18,9 @@ struct SavedMeeting: Identifiable, Codable {
     var summary: String
     var keyPoints: [String]
     var todos: [TodoItem]
+    /// Bookmarked from the workbench header (the bookmark icon). Shown
+    /// in the sidebar and library rows.
+    var isBookmarked: Bool = false
 
     var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
 
@@ -49,6 +52,26 @@ struct TodoItem: Identifiable, Codable, Hashable {
         self.id = id
         self.text = text
         self.done = done
+    }
+}
+
+extension SavedMeeting {
+    /// Tolerant decoding: `isBookmarked` was added after the first
+    /// saved meetings, so files written before it lack the key. Kept
+    /// in an extension so the memberwise initializer survives.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decode(Date.self, forKey: .endedAt)
+        mode = try container.decode(String.self, forKey: .mode)
+        engine = try container.decode(String.self, forKey: .engine)
+        segments = try container.decode([SavedSegment].self, forKey: .segments)
+        summary = try container.decode(String.self, forKey: .summary)
+        keyPoints = try container.decode([String].self, forKey: .keyPoints)
+        todos = try container.decode([TodoItem].self, forKey: .todos)
+        isBookmarked = try container.decodeIfPresent(Bool.self, forKey: .isBookmarked) ?? false
     }
 }
 

@@ -65,14 +65,16 @@ struct RecordingStatusView: View {
     }
 }
 
-/// Round recorder-style transport shared by the main window, the
-/// floating capsule and the compact window: a red record circle,
-/// pause/resume, and stop. The record circle doubles as the resume
-/// control while paused (it is the obvious "start again" button);
-/// Cmd+R starts when idle and resumes when paused.
+/// Round recorder-style transport shared by the main window: a red
+/// record circle and pause/resume. The record circle is the primary
+/// action — start when idle, stop while recording, resume while
+/// paused (it is the obvious "start again" button); its icon shows
+/// a white square while recording and a white dot otherwise.
+/// Cmd+R fires the same primary action.
 ///
-/// The mini window does NOT use this — its mic is the only control
-/// (tap = start / pause / resume, long-press = stop).
+/// The floating capsule and top bar do NOT use this — they have
+/// their own transport (the capsule's red square, the bar's
+/// stop/pause buttons).
 struct TransportControls: View {
     @EnvironmentObject var session: MeetingSession
 
@@ -85,6 +87,8 @@ struct TransportControls: View {
             Button(action: {
                 if session.isPaused {
                     session.resume()
+                } else if session.isRecording {
+                    session.stop()
                 } else {
                     session.start()
                 }
@@ -96,12 +100,21 @@ struct TransportControls: View {
                         Circle()
                             .strokeBorder(Color.red.opacity(0.35), lineWidth: 3)
                     )
+                    .overlay(
+                        Group {
+                            if session.isRecording && !session.isPaused {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                            } else {
+                                Circle().fill(Color.white).frame(width: 10, height: 10)
+                            }
+                        }
+                    )
             }
             .buttonStyle(.plain)
-            .disabled(session.isRecording && !session.isPaused)
-            .opacity(session.isRecording && !session.isPaused ? 0.35 : 1)
             .keyboardShortcut("r", modifiers: .command)
-            .help(session.isPaused ? "继续录音" : "开始录音")
+            .help(session.isPaused ? "继续录音" : session.isRecording ? "结束录音" : "开始录音")
 
             Button(action: {
                 if session.isPaused { session.resume() } else { session.pause() }
@@ -114,16 +127,6 @@ struct TransportControls: View {
             .buttonStyle(.plain)
             .disabled(!session.isRecording)
             .help(session.isPaused ? "继续录音" : "暂停录音")
-
-            Button(action: { session.stop() }) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 13))
-                    .frame(width: size - 2, height: size - 2)
-                    .background(Circle().fill(Color.primary.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-            .disabled(!session.isRecording)
-            .help("结束录音")
         }
     }
 }

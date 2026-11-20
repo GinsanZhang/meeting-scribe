@@ -4,6 +4,8 @@ import SwiftUI
 /// Keys are never shown back and never leave the Keychain.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var session: MeetingSession
+    @AppStorage(SettingsKey.meetingMode) private var modeRaw = MeetingMode.online.rawValue
     @AppStorage(SettingsKey.summaryProvider) private var providerRaw = SummaryProvider.ollama.rawValue
     @AppStorage(SettingsKey.ollamaModel) private var ollamaModel = SummaryProvider.ollama.defaultModel
     @AppStorage(SettingsKey.openRouterModel) private var openRouterModel = SummaryProvider.openRouter.defaultModel
@@ -30,6 +32,19 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+            }
+
+            Section("会议模式") {
+                Picker("模式", selection: $modeRaw) {
+                    ForEach(MeetingMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(session.isRecording)
+                Text("线上会议收麦克风 + 系统音；线下会议只用麦克风收全屋声音，靠声纹区分发言人。录音中不能切换。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("总结服务") {

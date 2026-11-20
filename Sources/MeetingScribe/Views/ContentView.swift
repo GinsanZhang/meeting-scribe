@@ -13,6 +13,8 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     /// Owned by the app and shared with the other view modes.
     @EnvironmentObject var session: MeetingSession
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @StateObject private var store = MeetingStore.shared
 
     @AppStorage(SettingsKey.meetingMode) private var modeRaw = MeetingMode.online.rawValue
@@ -34,7 +36,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             sidebar
             Divider()
             centerColumn
@@ -49,6 +51,30 @@ struct ContentView: View {
         .onChange(of: modeRaw) { _, newValue in
             session.mode = MeetingMode(rawValue: newValue) ?? .online
         }
+    }
+
+    /// Whether the meeting shown in the center is bookmarked (the
+    /// header's bookmark icon): the saved meeting's flag, or the live
+    /// session's.
+    private var isBookmarked: Bool {
+        if let meeting = selectedMeeting { return meeting.isBookmarked }
+        return session.isBookmarked
+    }
+
+    private func toggleBookmark() {
+        if var meeting = selectedMeeting {
+            meeting.isBookmarked.toggle()
+            MeetingStore.shared.save(meeting)
+        } else {
+            session.toggleBookmark()
+        }
+    }
+
+    /// Switches to a floating mode: open the target window first,
+    /// then dismiss this one, so a view is always visible.
+    private func switchMode(_ mode: ViewMode) {
+        openWindow(id: mode.rawValue)
+        dismissWindow(id: ViewMode.main.rawValue)
     }
 
     // MARK: - Selection
@@ -136,6 +162,11 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                             Text(meeting.title)
                                 .lineLimit(1)
+                            if meeting.isBookmarked {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.blue)
+                            }
                             Spacer()
                             Text(formatDuration(meeting.duration))
                                 .font(.caption.monospaced())
@@ -213,6 +244,7 @@ struct ContentView: View {
             centerTabBar
             Divider()
             tabContent
+                .frame(maxHeight: .infinity)
             if !isViewingSavedMeeting {
                 LivePartialFooterView()
                 realtimeSummaryBar
@@ -227,6 +259,9 @@ struct ContentView: View {
             if session.isRecording {
                 RecordingIndicator(elapsed: session.elapsedSeconds, paused: session.isPaused)
             } else {
+                Text(formatTime(session.elapsedSeconds))
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
                 Text(session.status)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -245,12 +280,12 @@ struct ContentView: View {
 
             Spacer()
 
-            Button { copyToClipboard(displayedTranscriptText) } label: {
-                Image(systemName: "doc.on.doc")
+            Button { toggleBookmark() } label: {
+                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                    .foregroundStyle(isBookmarked ? .blue : .secondary)
             }
             .buttonStyle(.plain)
-            .disabled(session.segments.isEmpty)
-            .help("复制全文")
+            .help(isBookmarked ? "取消收藏" : "收藏这场会议")
 
             HStack(spacing: 4) {
                 Image(systemName: "person.2")
@@ -260,16 +295,11 @@ struct ContentView: View {
             }
             .foregroundStyle(.secondary)
             .help("\(session.speakerCount) 位发言人")
-
-            ViewModeMenu(current: .main)
+            .opacity(session.speakerCount > 0 ? 1 : 0)
 
             Menu {
-                Picker("会议模式", selection: $modeRaw) {
-                    ForEach(MeetingMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode.rawValue)
-                    }
-                }
-                .disabled(session.isRecording)
+                Button("切换到悬浮胶囊") { switchMode(.capsule) }
+                Button("切换到顶部悬浮条") { switchMode(.topBar) }
                 Divider()
                 Button("导出 .txt") { exportTranscript() }
                 Button("复制全文") { copyToClipboard(displayedTranscriptText) }
@@ -278,6 +308,7 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
+            .menuStyle(.borderlessButton)
             .help("更多")
         }
         .padding(.horizontal)
@@ -299,6 +330,13 @@ struct ContentView: View {
 
             Spacer()
 
+            Button { toggleBookmark() } label: {
+                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                    .foregroundStyle(isBookmarked ? .blue : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isBookmarked ? "取消收藏" : "收藏这场会议")
+
             Button { copyToClipboard(displayedTranscriptText) } label: {
                 Image(systemName: "doc.on.doc")
             }
@@ -317,6 +355,7 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
+            .menuStyle(.borderlessButton)
             .help("更多")
         }
         .padding(.horizontal)
@@ -370,20 +409,18 @@ struct ContentView: View {
     }
 
     private var centerTabBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 8) {
             ForEach(CenterTab.allCases, id: \.self) { tab in
                 Button {
                     centerTab = tab
                 } label: {
                     Text(tab.rawValue)
                         .font(.callout)
-                        .foregroundStyle(centerTab == tab ? .primary : .secondary)
-                        .padding(.vertical, 6)
-                        .overlay(alignment: .bottom) {
-                            if centerTab == tab {
-                                Rectangle().fill(Color.blue).frame(height: 2)
-                            }
-                        }
+                        .foregroundStyle(centerTab == tab ? .blue : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(centerTab == tab ? Color.blue.opacity(0.12) : Color.clear)
+                        .clipShape(.capsule)
                 }
                 .buttonStyle(.plain)
             }
@@ -410,6 +447,7 @@ struct ContentView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .foregroundStyle(speakerFilter == nil ? .secondary : .blue)
             }
+            .menuStyle(.borderlessButton)
             .help("按发言人筛选")
         }
         .padding(.horizontal)
@@ -495,7 +533,14 @@ struct ContentView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(meeting.title).font(.headline)
+                                HStack(spacing: 6) {
+                                    Text(meeting.title).font(.headline)
+                                    if meeting.isBookmarked {
+                                        Image(systemName: "bookmark.fill")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.blue)
+                                    }
+                                }
                                 Text("\(dayLabel(for: meeting.startedAt)) \(timeString(meeting.startedAt)) · \(meeting.speakerCount) 位发言人 · \(meeting.segments.count) 段")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)

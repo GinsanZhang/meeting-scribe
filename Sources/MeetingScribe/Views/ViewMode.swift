@@ -1,23 +1,21 @@
 import SwiftUI
 
-/// The five view modes of the app. Exactly one window is visible at
-/// a time: switching opens the target window and dismisses the
-/// current one, so the modes never stack on screen together.
+/// The three view modes of the app (design 方案 B + 悬浮转录): the
+/// workbench main window, the floating capsule and the top floating
+/// bar. Exactly one window is visible at a time: switching opens the
+/// target window and dismisses the current one, so the modes never
+/// stack on screen together.
 ///
 /// The raw value is the Window scene id in MeetingScribeApp, so
 /// `openWindow(id: mode.rawValue)` / `dismissWindow(id: mode.rawValue)`
 /// are the whole switching mechanism.
 enum ViewMode: String, CaseIterable, Identifiable {
-    /// The full main window (ContentView).
+    /// The workbench main window (ContentView).
     case main
-    /// A: floating capsule — spectrum + one live line + transport.
+    /// Floating capsule — spectrum + one live line + transport.
     case capsule
-    /// B: compact main window — the transcript in a smaller window.
-    case compact
-    /// C: top floating bar — one thin strip docked at the top of the screen.
+    /// Top floating bar — one thin strip docked at the top of the screen.
     case topBar
-    /// D: minimal offline window — the mic is the only control.
-    case mini
 
     var id: String { rawValue }
 
@@ -25,9 +23,7 @@ enum ViewMode: String, CaseIterable, Identifiable {
         switch self {
         case .main: return "主窗口"
         case .capsule: return "悬浮胶囊"
-        case .compact: return "精简主窗"
         case .topBar: return "顶部悬浮条"
-        case .mini: return "极简"
         }
     }
 
@@ -35,9 +31,7 @@ enum ViewMode: String, CaseIterable, Identifiable {
         switch self {
         case .main: return "macwindow"
         case .capsule: return "capsule"
-        case .compact: return "rectangle.compress.vertical"
         case .topBar: return "menubar.rectangle"
-        case .mini: return "mic.circle"
         }
     }
 }
@@ -64,6 +58,7 @@ struct ViewModeMenu: View {
         } label: {
             Image(systemName: "rectangle.on.rectangle")
         }
+        .menuStyle(.borderlessButton)
         .help("切换视图")
     }
 

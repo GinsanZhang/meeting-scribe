@@ -29,8 +29,8 @@ struct DisplaySegment: Identifiable {
     }
 }
 
-/// Transcript pieces shared by the main window and the compact window,
-/// so both modes show the same list, the same live footer and the same
+/// Transcript pieces shared by the main window, so the workbench
+/// tabs show the same list, the same live footer and the same
 /// summary. Moved out of ContentView verbatim — behavior unchanged.
 ///
 /// RED LINE (from the 2026-11-19 crash fix): live subtitles stay in
