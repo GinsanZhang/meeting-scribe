@@ -48,6 +48,9 @@ final class MeetingSession: ObservableObject {
     /// Segments covered by the last live-summary refresh, so a refresh
     /// never re-summarizes the same transcript twice.
     private var liveSummarySegmentCount = 0
+    /// Recording clock (seconds, pauses excluded) at the last
+    /// live-summary refresh. The 60 s time trigger measures from here.
+    private var liveSummaryElapsedAt = 0
     private var isRefreshingLiveSummary = false
 
     /// Whether the current meeting is bookmarked (the workbench
@@ -114,6 +117,7 @@ final class MeetingSession: ObservableObject {
         liveSummary = ""
         liveKeyPoints = []
         liveSummarySegmentCount = 0
+        liveSummaryElapsedAt = 0
         isBookmarked = false
         savedMeetingId = nil
         engineKind = TranscriptionEngineKind(
@@ -207,6 +211,7 @@ final class MeetingSession: ObservableObject {
               segments.count > liveSummarySegmentCount else { return }
         isRefreshingLiveSummary = true
         liveSummarySegmentCount = segments.count
+        liveSummaryElapsedAt = elapsedSeconds
         let transcript = transcriptText
         Task {
             defer { isRefreshingLiveSummary = false }
@@ -354,7 +359,19 @@ final class MeetingSession: ObservableObject {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
                     if Task.isCancelled { return }
-                    if isRecording && !isPaused { elapsedSeconds += 1 }
+                    if isRecording && !isPaused {
+                        elapsedSeconds += 1
+                        // Live summary at most 60 s apart: if new
+                        // segments arrived but fewer than 5, the
+                        // count trigger hasn't fired — refresh on
+                        // time instead, so a slow meeting still gets
+                        // a fresh summary within a minute.
+                        if !segments.isEmpty,
+                           segments.count > liveSummarySegmentCount,
+                           elapsedSeconds - liveSummaryElapsedAt >= 60 {
+                            refreshLiveSummary()
+                        }
+                    }
                 }
             }
             let engineLabel = engineKind == .online ? "在线识别" : "本地识别"

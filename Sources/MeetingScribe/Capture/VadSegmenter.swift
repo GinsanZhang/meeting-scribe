@@ -37,11 +37,12 @@ final class VadSegmenter {
                 minSilenceDuration: 0.3,
                 minSpeechDuration: 0.25,
                 windowSize: 512,
-                // A long monologue is cut at 10 s so recognition
-                // keeps up while the speaker is still talking,
-                // instead of one recognition unit growing unbounded
-                // until they stop.
-                maxSpeechDuration: 10
+                // A long monologue is cut at 5 s so the transcript
+                // never lags more than ~5 s behind the speaker: a
+                // chunk is finalized ~1–2 s after its 5 s cut on the
+                // online engine (faster locally), instead of one
+                // recognition unit growing unbounded until they stop.
+                maxSpeechDuration: 5
             )
         )
         vad = SherpaOnnxVoiceActivityDetectorWrapper(config: &modelConfig, buffer_size_in_seconds: 60)
