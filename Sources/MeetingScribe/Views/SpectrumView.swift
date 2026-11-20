@@ -27,6 +27,8 @@ struct SpectrumStrip: View {
     let micBars: [CGFloat]
     let systemBars: [CGFloat]
     let showSystem: Bool
+    var height: CGFloat = 18
+    var barWidth: CGFloat = 3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -43,7 +45,7 @@ struct SpectrumStrip: View {
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .leading)
-            SpectrumBarsView(bars: bars, color: color, height: 18)
+            SpectrumBarsView(bars: bars, color: color, height: height, barWidth: barWidth)
         }
     }
 }

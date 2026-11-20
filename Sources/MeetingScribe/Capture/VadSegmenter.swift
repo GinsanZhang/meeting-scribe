@@ -29,16 +29,19 @@ final class VadSegmenter {
             sileroVad: sherpaOnnxSileroVadModelConfig(
                 model: SherpaModelManager.vadModelPath,
                 threshold: 0.5,
-                // A 0.5 s pause ends an utterance: long enough not to
-                // split on hesitations, short enough to keep sentences
-                // apart. Tune here if segments feel too chopped or
-                // too merged.
-                minSilenceDuration: 0.5,
+                // A 0.3 s pause ends an utterance: short enough to
+                // recognize at the natural pauses inside speech
+                // (the previous 0.5 s made it feel like recognition
+                // waited for a whole sentence to finish), long
+                // enough not to split on brief hesitations.
+                minSilenceDuration: 0.3,
                 minSpeechDuration: 0.25,
                 windowSize: 512,
-                // A long monologue is cut at 30 s so no single
-                // recognition unit grows unbounded.
-                maxSpeechDuration: 30
+                // A long monologue is cut at 10 s so recognition
+                // keeps up while the speaker is still talking,
+                // instead of one recognition unit growing unbounded
+                // until they stop.
+                maxSpeechDuration: 10
             )
         )
         vad = SherpaOnnxVoiceActivityDetectorWrapper(config: &modelConfig, buffer_size_in_seconds: 60)

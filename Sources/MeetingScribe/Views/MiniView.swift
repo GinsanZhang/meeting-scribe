@@ -12,7 +12,8 @@ import SwiftUI
 /// so the rule holds by construction.
 struct MiniView: View {
     @EnvironmentObject var session: MeetingSession
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     @State private var holdProgress = 0.0
     /// Set when a long-press stops the recording, so the Button action
@@ -49,14 +50,20 @@ struct MiniView: View {
                     .font(.system(size: 11))
             }
             Spacer(minLength: 0)
-            Button(action: { dismiss() }) {
+            ViewModeMenu(current: .mini)
+            // Switch back to the main window: reopen it first, then
+            // dismiss the mini window, so a view is always visible.
+            Button(action: {
+                openWindow(id: "main")
+                dismissWindow(id: "mini")
+            }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
-            .help("关闭极简窗口")
+            .help("返回主窗口")
         }
     }
 
