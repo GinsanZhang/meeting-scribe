@@ -23,7 +23,12 @@ let package = Package(
             dependencies: [
                 .product(name: "SpeakerKit", package: "argmax-oss-swift"),
                 .product(name: "sherpa-onnx", package: "sherpa-onnx")
-            ]
+            ],
+            // Resources/ holds Assets.xcassets (AppIcon.appiconset
+            // with the logo) plus Info.plist. Xcode compiles the
+            // catalog into Assets.car and uses the AppIcon as the
+            // app's Dock/Finder icon.
+            resources: [.process("Resources")]
         )
     ]
 )
