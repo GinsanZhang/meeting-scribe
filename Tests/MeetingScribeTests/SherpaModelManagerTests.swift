@@ -29,6 +29,22 @@ final class SherpaModelManagerTests: XCTestCase {
         XCTAssertFalse(SherpaModelManager.isDownloaded(in: root, fileManager: .default))
     }
 
+    func testDirectoryNamedAsModelFileIsNotRecognizedAsDownloaded() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try createSparseFile(at: root.appendingPathComponent("encoder.int8.onnx"), size: 158_000_000)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("decoder.int8.onnx"),
+            withIntermediateDirectories: true
+        )
+        try createSparseFile(at: root.appendingPathComponent("tokens.txt"), size: 76_000)
+
+        XCTAssertFalse(SherpaModelManager.isDownloaded(in: root, fileManager: .default))
+    }
+
     private func createSparseFile(at url: URL, size: Int64) throws {
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)

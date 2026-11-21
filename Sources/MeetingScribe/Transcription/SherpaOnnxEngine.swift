@@ -67,6 +67,7 @@ enum SherpaModelManager {
             let url = directory.appendingPathComponent(file)
             guard fileManager.isReadableFile(atPath: url.path),
                   let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular,
                   let size = attributes[.size] as? NSNumber
             else { return false }
             return size.int64Value >= (minimumSizes[file] ?? 1)
