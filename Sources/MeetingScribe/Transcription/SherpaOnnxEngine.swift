@@ -8,9 +8,16 @@ import SherpaOnnx
 /// them. The model is bilingual (Chinese + English) and, per sherpa's
 /// docs, emits no word timestamps.
 enum SherpaModelManager {
-    /// Official release tarball. The archive has one top-level
-    /// directory containing the three files.
-    static let downloadURL = URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2")!
+    /// The three int8 files, downloaded directly from the author's
+    /// Hugging Face repo. (The GitHub release tarball bundles the
+    /// fp32 models too — ~1 GB total — and its silent multi-minute
+    /// extraction after the progress hit 100% looked like a finished
+    /// download that never registered, so it is no longer used.)
+    static let modelFiles: [(name: String, url: URL, size: Int64)] = [
+        ("encoder.int8.onnx", URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/encoder.int8.onnx")!, 158_000_000),
+        ("decoder.int8.onnx", URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/decoder.int8.onnx")!, 68_000_000),
+        ("tokens.txt", URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/tokens.txt")!, 76_000),
+    ]
 
     static let requiredFiles = ["encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt"]
 
@@ -57,43 +64,51 @@ enum SherpaModelManager {
     static var tokensPath: String { modelDirectory.appendingPathComponent("tokens.txt").path }
 
     enum DownloadError: Error, LocalizedError {
-        case extractionFailed(String)
+        case failed(String)
 
         var errorDescription: String? {
             switch self {
-            case .extractionFailed(let detail): return "模型解压失败：\(detail)"
+            case .failed(let detail): return "模型下载失败：\(detail)"
             }
         }
     }
 
-    /// Download the model tarball and extract it into `modelDirectory`.
-    /// `onProgress` reports 0...1 during the download; it is called from
-    /// a background URLSession queue, so the caller must hop to the main
-    /// actor before touching UI state.
+    /// Download the three int8 model files directly into
+    /// `modelDirectory` (no tarball, no extraction). `onProgress`
+    /// reports 0...1 across all three files; it is called from a
+    /// background URLSession queue, so the caller must hop to the
+    /// main actor before touching UI state.
     static func download(onProgress: @escaping @Sendable (Double) -> Void) async throws {
-        let delegate = DownloadDelegate(onProgress: onProgress)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        let tempURL = try await withCheckedThrowingContinuation { continuation in
-            delegate.continuation = continuation
-            session.downloadTask(with: downloadURL).resume()
-        }
-        defer { try? FileManager.default.removeItem(at: tempURL) }
         try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
-        // The tarball has one top-level directory; strip it so the
-        // files land directly in modelDirectory. /usr/bin/tar ships with
-        // macOS; this assumes the app runs unsandboxed (true for the
-        // current Xcode-run setup).
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = ["-xjf", tempURL.path, "-C", modelDirectory.path, "--strip-components=1"]
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw DownloadError.extractionFailed("tar 退出码 \(process.terminationStatus)")
+        let totalSize = modelFiles.reduce(0) { $0 + $1.size }
+        var completedBytes: Int64 = 0
+        for file in modelFiles {
+            let baseBytes = completedBytes
+            let delegate = DownloadDelegate { fileProgress in
+                onProgress((Double(baseBytes) + fileProgress * Double(file.size)) / Double(totalSize))
+            }
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            let tempURL = try await withCheckedThrowingContinuation { continuation in
+                delegate.continuation = continuation
+                session.downloadTask(with: file.url).resume()
+            }
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+            let dest = modelDirectory.appendingPathComponent(file.name)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: dest)
+            completedBytes += file.size
+            onProgress(Double(completedBytes) / Double(totalSize))
         }
         guard isDownloaded else {
-            throw DownloadError.extractionFailed("解压后缺少模型文件")
+            throw DownloadError.failed("下载后缺少模型文件")
+        }
+        // Leftover fp32 files from the old tarball download (which
+        // bundled them) — the int8 files are all this app uses.
+        for leftover in ["encoder.onnx", "decoder.onnx"] {
+            try? FileManager.default.removeItem(at: modelDirectory.appendingPathComponent(leftover))
         }
     }
 
