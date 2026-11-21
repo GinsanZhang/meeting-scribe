@@ -54,8 +54,22 @@ enum SherpaModelManager {
     }
 
     static var isDownloaded: Bool {
-        requiredFiles.allSatisfy { file in
-            FileManager.default.fileExists(atPath: modelDirectory.appendingPathComponent(file).path)
+        isDownloaded(in: modelDirectory, fileManager: .default)
+    }
+
+    static func isDownloaded(in directory: URL, fileManager: FileManager) -> Bool {
+        let minimumSizes: [String: Int64] = [
+            "encoder.int8.onnx": 100_000_000,
+            "decoder.int8.onnx": 20_000_000,
+            "tokens.txt": 1_000
+        ]
+        return requiredFiles.allSatisfy { file in
+            let url = directory.appendingPathComponent(file)
+            guard fileManager.isReadableFile(atPath: url.path),
+                  let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+                  let size = attributes[.size] as? NSNumber
+            else { return false }
+            return size.int64Value >= (minimumSizes[file] ?? 1)
         }
     }
 
@@ -140,7 +154,19 @@ enum SherpaModelManager {
             downloadTask: URLSessionDownloadTask,
             didFinishDownloadingTo location: URL
         ) {
-            resume(returning: location)
+            if let response = downloadTask.response as? HTTPURLResponse,
+               !(200...299).contains(response.statusCode) {
+                resume(throwing: DownloadError.failed("HTTP \(response.statusCode)"))
+                return
+            }
+            let preserved = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MeetingScribe-\(UUID().uuidString).download")
+            do {
+                try FileManager.default.moveItem(at: location, to: preserved)
+                resume(returning: preserved)
+            } catch {
+                resume(throwing: error)
+            }
         }
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

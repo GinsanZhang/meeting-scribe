@@ -29,6 +29,10 @@ let package = Package(
             // catalog into Assets.car and uses the AppIcon as the
             // app's Dock/Finder icon.
             resources: [.process("Resources")]
+        ),
+        .testTarget(
+            name: "MeetingScribeTests",
+            dependencies: ["MeetingScribe"]
         )
     ]
 )
